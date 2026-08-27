@@ -6,5 +6,6 @@ artifacts/
 target/
 zig-out/
 .zig-cache/
+local.edn
 
 .DS_Store

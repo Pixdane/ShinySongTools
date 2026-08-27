@@ -13,3 +13,9 @@ git submodule update --init --recursive
 ```
 
 第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 开发文档
+
+- [Bundle 编译流程](docs/bundle-build.md)
+- [Swift 入口行为](docs/swift-entry.md)
+- [Babashka Tasks](docs/tasks.md)
