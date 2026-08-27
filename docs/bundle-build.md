@@ -55,6 +55,15 @@ cargo build --release --target aarch64-apple-darwin
 
 Cargo 步骤不参与 Zig 的文件缓存判断。每次执行 `zig build bundle` 时，Zig 都调用 Cargo；是否重新编译 Rust crate 由 Cargo 根据 manifest、lockfile、build script、源码和依赖自行决定。
 
+生产 runtime 的 release profile 必须显式使用 unwind panic strategy：
+
+```toml
+[profile.release]
+panic = "unwind"
+```
+
+scheduler 和插件错误隔离依赖 `catch_unwind`；不得为了缩小产物或其它优化把生产 staticlib 改为 `panic = "abort"`。`catch_unwind` 的具体能力边界见 [Runtime crate 设计](runtime-crate.md#panic-边界)。
+
 Cargo 产物位于：
 
 ```text

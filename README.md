@@ -18,4 +18,10 @@ git submodule update --init --recursive
 
 - [Bundle 编译流程](docs/bundle-build.md)
 - [Swift 入口行为](docs/swift-entry.md)
+- [运行时架构总览](docs/runtime-architecture.md)
+  - [Core crate 设计](docs/core-crate.md)
+  - [Plugin API 设计](docs/plugin-api.md)
+  - [Plugin system 设计](docs/plugin-system.md)
+  - [Runtime crate 设计](docs/runtime-crate.md)
+  - [Debug、Diagnostics 与 Logging](docs/debug-diagnostics-logging.md)
 - [Babashka Tasks](docs/tasks.md)
