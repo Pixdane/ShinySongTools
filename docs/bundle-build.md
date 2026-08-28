@@ -6,7 +6,7 @@
 zig build bundle
 ```
 
-Zig 负责描述完整构建图。Cargo 负责编译 Rust staticlib；Zig 负责生成 Swift 输入、链接、组装 bundle、生成 manifest、签名、验证和发布。
+Zig 负责描述完整构建图。Cargo 负责编译 Rust staticlib；Zig 负责生成 Swift 输入、链接、组装 bundle、签名、验证、生成外置 manifest 和发布。
 
 `build/AKInterface.bundle` 是发布路径。构建过程不得直接在该路径中生成或修改中间文件。
 
@@ -109,28 +109,9 @@ PlayTools 的加载路径为 bundle URL → `principalClass` → `Plugin.Type` �
 
 组装结果是未签名 bundle 目录的 `LazyPath`，仍不写入最终发布路径。
 
-### 5. 生成 build manifest
+### 5. 签名并验证
 
-Manifest 步骤读取本次构建的实际输入和输出，生成 `build-manifest.json`，至少记录：
-
-- bundle executable SHA-256
-- `Info.plist` SHA-256
-- PlayTools repository 与固定 commit
-- AKPlugin patch SHA-256
-- architecture、deployment target 和签名类型
-- `rustc`、`swiftc`、Zig 与 macOS SDK 版本
-
-Manifest 必须属于本次构建图，不能从固定路径读取上一次构建的文件。
-
-生成的 manifest 会在签名前写入本次 bundle 的：
-
-```text
-AKInterface.bundle/Contents/Resources/build-manifest.json
-```
-
-### 6. 签名并验证
-
-签名步骤以未签名 bundle 和本次 manifest 为输入，先复制到新的输出目录，把 manifest 放入 `Contents/Resources/`，再对整个输出执行 ad-hoc 签名。不得就地签名 Zig 缓存中的上游输入，也不得直接签名 `build/AKInterface.bundle`。
+签名步骤以未签名 bundle 为输入，先复制到新的输出目录，再对整个输出执行 ad-hoc 签名。不得就地签名 Zig 缓存中的上游输入，也不得直接签名 `build/AKInterface.bundle`。
 
 等价命令为：
 
@@ -141,29 +122,56 @@ codesign --verify --strict AKInterface.bundle
 
 验证步骤必须依赖本次签名输出。签名或验证失败时，后续发布步骤不得执行。
 
+### 6. 生成外置 build manifest
+
+Manifest 步骤只能读取已经通过签名验证的最终 bundle，生成与 bundle 相邻的 `AKInterface.bundle.manifest.json`。Manifest 至少记录：
+
+- 最终已签名 bundle executable SHA-256
+- 最终 `Info.plist` SHA-256
+- `BundleFingerprintV1` 的有序文件条目
+- PlayTools repository 与固定 commit
+- AKPlugin patch SHA-256
+- architecture、deployment target 和签名类型
+- `rustc`、`swiftc`、Zig 与 macOS SDK 版本
+
+`BundleFingerprintV1` 不定义一个含义模糊的“bundle SHA-256”，而是按以下规则生成和比较结构：
+
+1. 遍历最终已签名 bundle；v1 拒绝 symlink，以及目录和 regular file 之外的条目。
+2. 每个文件使用相对于 bundle 根目录的 POSIX 路径；拒绝绝对路径、空路径和 `..` 分量。
+3. 包含所有 regular file，包括 executable、`Info.plist` 和 `_CodeSignature` 中的文件。
+4. 路径按 UTF-8 byte order 排序，每个条目记录相对路径和该文件的 SHA-256。
+5. 身份比较是整个有序条目向量的结构化相等比较。
+
+sidecar 自身位于 bundle 之外，不属于 fingerprint。Fingerprint 不包含 xattr、mtime、inode、owner；可执行位、bundle 布局和代码签名分别作为验证条件检查。
+
+Manifest 必须属于本次构建图，并直接接收本次签名输出的 `LazyPath`，不能从固定路径读取上一次构建的文件。
+
 ### 7. 发布最终产物
 
-发布步骤只接受包含本次 manifest、并且已经通过签名验证的完整 bundle。
+发布步骤只接受已经通过签名验证的完整 bundle，以及由该 bundle 生成的本次 sidecar manifest。
 
-发布时先写入 `build/` 下的临时兄弟路径，完整复制成功后再替换最终路径。不得逐文件直接覆盖现有 `build/AKInterface.bundle`。
+发布时分别先写入 `build/` 下的临时兄弟路径，完整复制成功后再替换最终路径。先发布 bundle，最后发布 sidecar；不得逐文件直接覆盖现有 `build/AKInterface.bundle`。candidate 只有在 bundle 与 sidecar 都存在、且重新计算的 fingerprint 与 sidecar 完全一致时才有效，因此中断发布不会把新旧不匹配的文件误认为有效 candidate。
 
 构建失败时：
 
-- 若此前没有成功产物，`build/AKInterface.bundle` 不存在。
-- 若此前已有成功产物，保留该完整产物，不留下本次构建的半成品。
+- 若此前没有成功产物，不存在有效的 bundle/sidecar 对。
+- 若此前已有成功产物，尽力保留该完整产物；即使在两个原子替换之间中断，新旧不匹配也会被识别为无效 candidate。
 
-因此，只要 `build/AKInterface.bundle` 存在，它就一定来自一次完成编译、组装、manifest 生成和签名验证的成功发布。若当前构建失败，该路径可能仍代表上一次成功构建，其准确身份以 bundle 内 manifest 中的 SHA-256 为准。
+仅有 `build/AKInterface.bundle` 存在不足以证明一次成功发布。消费者必须同时读取相邻 sidecar，并重新计算完整 fingerprint；二者一致才接受该 candidate。
 
 ## 最终产物
 
 ```text
-build/AKInterface.bundle/
-└── Contents/
-    ├── Info.plist
-    ├── MacOS/
-    │   └── AKInterface
-    └── Resources/
-        └── build-manifest.json
+build/
+├── AKInterface.bundle/
+│   └── Contents/
+│       ├── Info.plist
+│       ├── MacOS/
+│       │   └── AKInterface
+│       └── Resources/
+└── AKInterface.bundle.manifest.json
 ```
 
-可部署产物是完整的 `AKInterface.bundle`。生成的 Swift 源码、未签名 bundle、独立 executable 和 Rust staticlib 都是中间产物，不能单独替换到游戏中。
+构建 candidate 是完整的 `AKInterface.bundle` 与相邻 sidecar manifest。实际部署到游戏的只有 bundle；sidecar 用于部署前验证和事务记录，不复制进游戏。生成的 Swift 源码、未签名 bundle、独立 executable 和 Rust staticlib 都是中间产物，不能单独替换到游戏中。
+
+安装阶段必须原样复制已经签名的 candidate，不得再次签名 staged bundle。再次签名会修改 `_CodeSignature` 或 executable，使构建时批准的 fingerprint 失效。若目标平台后来证明必须在 staging 后重签名，则需要重新设计 candidate 身份和批准边界，不能静默放宽本约束。

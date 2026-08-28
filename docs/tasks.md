@@ -20,7 +20,7 @@ bb bundle build
    :task
    (let [[command & args] *command-line-args*
          manifest-path
-         "build/AKInterface.bundle/Contents/Resources/build-manifest.json"]
+         "build/AKInterface.bundle.manifest.json"]
      (case command
        "build"
        (do
@@ -32,7 +32,7 @@ bb bundle build
            (doseq [[label value]
                    [["Artifact" "build/AKInterface.bundle"]
                     ["Executable" (get-in manifest ["bundle" "executable"])]
-                    ["SHA-256" (get-in manifest ["bundle" "executable_sha256"])]
+                    ["Exec SHA" (get-in manifest ["bundle" "executable_sha256"])]
                     ["Target" (get-in manifest ["bundle" "target"])]
                     ["PlayTools" (get-in manifest ["upstream" "commit"])]
                     ["Patch" (get-in manifest ["patch" "sha256"])]
@@ -62,18 +62,18 @@ Bundle built successfully
 
 Artifact     build/AKInterface.bundle
 Executable   AKInterface
-SHA-256      <executable-sha256>
+Exec SHA     <executable-sha256>
 Target       arm64-apple-macos12.0
 PlayTools    <playtools-commit>
 Patch        <patch-sha256>
 Signature    ad-hoc, verified
-Manifest     build/AKInterface.bundle/Contents/Resources/build-manifest.json
+Manifest     build/AKInterface.bundle.manifest.json
 ```
 
 完整 manifest 保存在：
 
 ```text
-build/AKInterface.bundle/Contents/Resources/build-manifest.json
+build/AKInterface.bundle.manifest.json
 ```
 
 该 task 不读取、修改或启动游戏。
@@ -84,7 +84,7 @@ build/AKInterface.bundle/Contents/Resources/build-manifest.json
 
 ```sh
 bb bundle status
-bb bundle patch --expected-sha <candidate-sha256>
+bb bundle patch --expected-executable-sha <candidate-executable-sha256>
 bb bundle restore
 ```
 
@@ -117,7 +117,7 @@ bb bundle restore
 - `:game/:app` 是非空绝对路径字符串。
 - 路径解析后指向现有 `.app`，且满足游戏目标路径保护规则。
 
-从 `.app/Contents/Info.plist` 能可靠推导的 bundle ID、executable 名称和进程身份不重复写入 `local.edn`。bundle 相对路径、artifact 路径、构建参数、事务 SHA-256 和每次操作的确认值也不属于本地配置。
+从 `.app/Contents/Info.plist` 能可靠推导的 bundle ID、executable 名称和进程身份不重复写入 `local.edn`。bundle 相对路径、artifact 路径、构建参数、事务 fingerprint 和每次操作的 executable SHA-256 确认值也不属于本地配置。
 
 配置文件创建、EDN 解析、schema 校验、路径规范化和目标路径保护必须集中在一个可复用的公共加载入口中，例如：
 
@@ -165,11 +165,11 @@ artifacts/bundle/
 ```
 
 - `baseline/AKInterface.bundle` 保存首次受控 patch 前经过校验的游戏原始 bundle。
-- `state.edn` 记录 baseline SHA-256、最后一次成功安装的 SHA-256、目标身份和当前状态。
+- `state.edn` 记录 baseline 的完整 fingerprint、最后一次成功安装的完整 fingerprint、对应 executable SHA-256、目标身份和当前状态。
 - `transactions/current.edn` 是操作前原子写入的事务日志，用于识别和恢复中断操作。
 - `transactions/history/` 保存成功、失败和回滚结果，但不备份每个 candidate；candidate 应由构建系统重现。
 
-candidate 始终位于 `build/AKInterface.bundle`，不得复制到 `artifacts/` 充当安装状态记录。
+candidate 由 `build/AKInterface.bundle` 和相邻的 `build/AKInterface.bundle.manifest.json` 共同组成，不得复制到 `artifacts/` 充当安装状态记录。sidecar 不安装进游戏。
 
 为了保证替换使用同一文件系统上的原子重命名，执行 `patch` 或 `restore` 时使用的 `.stage-*` 和 `.old-*` 临时目录必须短暂创建在游戏目标旁边。它们不是持久备份：成功后必须删除；若操作中断，`status` 必须结合 `transactions/current.edn` 识别这些残留。不得为了把临时文件放进 `artifacts/` 而放弃同卷原子替换。
 
@@ -198,9 +198,9 @@ Bundle status
 
 Game              stopped
 State             patched
-Installed         <installed-sha256>
-Baseline          <baseline-sha256>
-Candidate         <candidate-sha256>
+Installed exec    <installed-executable-sha256>
+Baseline exec     <baseline-executable-sha256>
+Candidate exec    <candidate-executable-sha256>
 Candidate status  update available
 Signature         valid
 Residue           none
@@ -211,26 +211,27 @@ Residue           none
 状态不能通过比较 `installed` 与最新 `candidate` 得出。事务记录至少保存 `baseline` 和最后一次成功安装的 bundle 身份；`status` 再结合实际文件计算结果：
 
 - `unmanaged`：尚未建立受信任的 baseline。
-- `clean`：installed 与 baseline 相同。
-- `patched`：installed 与最后一次成功 patch 记录的 SHA-256 相同。
+- `clean`：installed 与 baseline 的完整 fingerprint 相同。
+- `patched`：installed 与最后一次成功 patch 记录的完整 fingerprint 相同。
 - `drifted`：installed 既不匹配 baseline，也不匹配任何受信任的成功安装记录。
 - `interrupted`：存在未完成事务，或存在能够关联到该事务的临时、旧版本残留。
 
 `candidate` 与 installed 的关系单独显示：
 
-- SHA-256 相同：`installed`。
-- SHA-256 不同，且主状态是 `patched`：`update available`。
+- 完整 fingerprint 相同：`installed`。
+- 完整 fingerprint 不同，且主状态是 `patched`：`update available`。
 - candidate 不存在：`not built`。
+- bundle 或 sidecar 只有一方存在，或重新计算结果不匹配：`invalid`。
 
-每次 `patch` 成功后才更新最后一次成功安装的 SHA-256。构建失败或仅执行 `build` 时不得更新该记录。
+每次 `patch` 成功后才更新最后一次成功安装的完整 fingerprint 和 executable SHA-256。构建失败或仅执行 `build` 时不得更新该记录。
 
 #### `status`
 
 `bb bundle status` 对游戏、bundle 和 `artifacts/` 是只读操作。唯一允许的写入是在 `local.edn` 缺失时创建空白模板并立即退出。配置有效后，它检查：
 
 - 游戏是否正在运行。
-- candidate 的 manifest、可执行文件 SHA-256 和签名。
-- installed、baseline 和最后一次成功安装记录的 SHA-256。
+- candidate sidecar、重新计算的完整 fingerprint、可执行文件 SHA-256 和签名。
+- installed、baseline 和最后一次成功安装记录的完整 fingerprint；executable SHA-256 另外用于显示和人工批准。
 - 是否存在未完成事务或受控临时路径残留。
 
 `status` 不得捕获 baseline、清理残留、修复签名或修改任何 bundle。
@@ -238,28 +239,28 @@ Residue           none
 #### `patch`
 
 ```sh
-bb bundle patch --expected-sha <candidate-sha256>
+bb bundle patch --expected-executable-sha <candidate-executable-sha256>
 ```
 
 `patch` 只接受已经由 `zig build bundle` 成功发布的完整 candidate。执行前必须满足：
 
 - 游戏未运行。
-- candidate 存在，并且 manifest、可执行文件 SHA-256 和签名相互一致。
-- `--expected-sha` 与 candidate manifest 中的 SHA-256 完全一致。
-- installed 处于 `clean` 状态；若已经安装同一 candidate，则作为幂等成功处理。
+- candidate bundle 与 sidecar 都存在，重新计算的完整 fingerprint、可执行文件 SHA-256、manifest 和签名相互一致。
+- `--expected-executable-sha` 与 candidate manifest 中的 executable SHA-256 完全一致。
+- installed 处于 `clean` 状态；或者 installed 同时匹配该 candidate 和最后一次成功 patch 记录，此时作为幂等成功处理。
 - 不存在 `drifted`、`interrupted` 或无法解释的事务残留。
 
 首次 patch 尚无 baseline 时，还必须提供 status 所报告的当前 installed 身份：
 
 ```sh
 bb bundle patch \
-  --expected-sha <candidate-sha256> \
-  --expected-installed-sha <current-installed-sha256>
+  --expected-executable-sha <candidate-executable-sha256> \
+  --expected-installed-executable-sha <current-installed-executable-sha256>
 ```
 
-只有 installed 与 `--expected-installed-sha` 一致时，才能将它保存为 baseline。不得把未知或已经被外部修改的 bundle 自动认定为原始版本。
+只有 installed 的 executable SHA-256 与 `--expected-installed-executable-sha` 一致，并且本次读取的完整 fingerprint 在复制后再次验证一致时，才能将它保存为 baseline。不得把未知或已经被外部修改的 bundle 自动认定为原始版本。
 
-替换采用同卷事务：先在目标旁生成并验证完整 staged bundle，再依次将 installed 重命名为受控 old 路径、将 staged bundle 重命名为正式路径。最终验证失败时必须用 old 路径回滚。不得逐文件覆盖正式 bundle。
+替换采用同卷事务：先在目标旁原样复制并验证完整 staged bundle，再依次将 installed 重命名为受控 old 路径、将 staged bundle 重命名为正式路径。staged bundle 不得重新签名；其完整 fingerprint 必须与构建 candidate 一致。最终验证失败时必须用 old 路径回滚。不得逐文件覆盖正式 bundle。
 
 若已处于 `patched` 且 candidate 发生更新，应先执行 `restore` 回到 baseline，再安装新的 candidate。初版不直接在两个 patched 版本之间切换。
 
@@ -268,13 +269,13 @@ bb bundle patch \
 `bb bundle restore` 将受信任的 baseline 事务性恢复到游戏 `PlugIns`：
 
 - 游戏必须未运行。
-- baseline 必须存在并通过记录的 SHA-256 校验。
+- baseline 必须存在并通过记录的完整 fingerprint 校验。
 - installed 必须匹配最后一次成功安装记录；若已经匹配 baseline，则只检查状态并作为幂等成功处理。
 - `drifted` 状态下拒绝覆盖，初版不提供 `--force`。
 
 恢复同样先创建并验证同卷 staged bundle，再进行重命名替换。不得先删除 installed 后直接复制 baseline，以免中途失败时留下不完整的正式路径。
 
-`patch` 和 `restore` 的实际执行属于游戏修改操作，需要针对确切 SHA-256 的明确批准。task 的存在或先前执行过 `status` 不构成修改授权。
+`patch` 和 `restore` 的实际执行属于游戏修改操作，需要针对确切 executable SHA-256 的明确批准。完整 fingerprint 负责事务完整性；executable SHA-256 作为简短、明确的人工批准身份。task 的存在或先前执行过 `status` 不构成修改授权。
 
 ## `fix-game`
 
@@ -331,7 +332,7 @@ artifacts/runtime-recovery/<transaction-id>/
 - 配置无效、身份映射缺失或存在歧义时，以非零状态退出。
 - 备份失败时，保留 live marker 并退出。
 - 隔离过程中失败时，优先恢复原路径，并在 artifact manifest 中记录失败或回滚状态。
-- 成功时只报告 artifact 备份路径和 `Game launched  no`，不自动启动游戏验证。
+- 成功时只报告 artifact 备份路径，并明确不自动启动游戏验证。
 
 实验结果只支持“隔离该 marker 修复了当次已观察到的启动故障”。`fix-game` 的成功仅表示可逆隔离事务完成，不证明当前或未来的崩溃都由 talagent saved state 引起。
 
