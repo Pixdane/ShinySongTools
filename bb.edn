@@ -1,0 +1,32 @@
+;; Babashka tasks (docs/tasks.md).
+
+{:tasks
+ {bundle
+  {:doc "Bundle 操作。用法: bb bundle build"
+   :requires ([cheshire.core :as json])
+   :task
+   (let [[command & args] *command-line-args*
+         manifest-path
+         "build/AKInterface.bundle.manifest.json"]
+     (case command
+       "build"
+       (do
+         (apply shell "zig build bundle" args)
+         (let [manifest (json/parse-string (slurp manifest-path))]
+           (println)
+           (println "Bundle built successfully")
+           (println)
+           (doseq [[label value]
+                   [["Artifact" "build/AKInterface.bundle"]
+                    ["Executable" (get-in manifest ["bundle" "executable"])]
+                    ["Exec SHA" (get-in manifest ["bundle" "executable_sha256"])]
+                    ["Target" (get-in manifest ["bundle" "target"])]
+                    ["PlayTools" (get-in manifest ["upstream" "commit"])]
+                    ["Patch" (get-in manifest ["patch" "sha256"])]
+                    ["Signature" "ad-hoc, verified"]
+                    ["Manifest" manifest-path]]]
+             (println (clojure.core/format "%-12s %s" label value)))))
+
+       (throw
+        (ex-info "用法: bb bundle build"
+                 {:args *command-line-args*}))))}}}

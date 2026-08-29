@@ -1,0 +1,13 @@
+[package]
+name = "scsp-plugin-api"
+description = "Plugin-author-facing API for the Shiny Song Tools plugin platform: Plugin, AppCtx, phase systems, branded cross-domain routes, and hook typestate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scsp-core = { workspace = true }
+bevy_ecs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

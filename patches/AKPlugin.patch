@@ -1,0 +1,71 @@
+# SCSP versioned AKPlugin patch (v1)
+#
+# Applies to: third_party/PlayTools/AKPlugin.swift
+# Upstream:   PlayCover/PlayTools @ d44d418b5221d06b934dbad80459705042c16b7b
+#
+# Format: sequential context-verified replacement blocks. Each `<<< BEFORE`
+# block must occur EXACTLY ONCE in the (already patched) source; any other
+# count is context drift and fails the build. Whitespace-sensitive.
+#
+# Semantics per docs/swift-entry.md:
+#   1. AKPlugin.init() dispatches scsp_start to the main queue (Swift side
+#      never calls Rust on the init() stack; the Documents path is passed
+#      through withCString and copied by Rust before it returns).
+#   2. mainScreenFrame: empty rectangle while no main screen exists.
+#   3. isFullscreen: report non-fullscreen while no window exists.
+#   4. Traffic-light mouse handling: only compare window identity while a
+#      first window exists.
+# These remove early-startup force unwraps only; behavior matches upstream
+# PlayTools once windows exist.
+
+<<< BEFORE
+    required override init() {
+        super.init()
+        if let window = NSApplication.shared.windows.first {
+<<< AFTER
+    required override init() {
+        super.init()
+
+        if let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first {
+            let documentsPath = documents.path
+
+            DispatchQueue.main.async {
+                documentsPath.withCString { path in
+                    scsp_start(path)
+                }
+            }
+        }
+
+        // 上游 PlayTools 窗口初始化继续执行。
+        if let window = NSApplication.shared.windows.first {
+<<< END
+
+<<< BEFORE
+    var mainScreenFrame: CGRect {
+        return NSScreen.main!.frame as CGRect
+    }
+<<< AFTER
+    var mainScreenFrame: CGRect {
+        return NSScreen.main?.frame ?? .zero
+    }
+<<< END
+
+<<< BEFORE
+    var isFullscreen: Bool {
+        NSApplication.shared.windows.first!.styleMask.contains(.fullScreen)
+    }
+<<< AFTER
+    var isFullscreen: Bool {
+        NSApplication.shared.windows.first?.styleMask.contains(.fullScreen) ?? false
+    }
+<<< END
+
+<<< BEFORE
+            if event.window != NSApplication.shared.windows.first! {
+<<< AFTER
+            if let firstWindow = NSApplication.shared.windows.first,
+               event.window != firstWindow {
+<<< END
