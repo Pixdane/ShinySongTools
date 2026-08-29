@@ -10,7 +10,7 @@
 ;;     {:game {:app           "/canonical/path/to/Game.app"
 ;;             :bundle-id     "<从 Info.plist 推导>"
 ;;             :documents     ".../Containers/<bundle-id>/Data/Documents"
-;;             :debug-socket  ".../Documents/shiny-song-tools/debug.sock"
+;;             :debug-socket  ".../Documents/shiny-song-tools/d.sock"
 ;;             :bundle        ".../PlugIns/AKInterface.bundle"}}
 ;;   派生值只存在于返回结果中，不写回 local.edn。
 ;;
@@ -68,7 +68,7 @@
      :bundle-id     id
      :executable-name exec-name
      :documents    documents
-     :debug-socket (str documents "/shiny-song-tools/debug.sock")
+     :debug-socket (str documents "/shiny-song-tools/d.sock")
      :bundle       (str plug-ins "/AKInterface.bundle")}))
 
 (defn- validate [config]

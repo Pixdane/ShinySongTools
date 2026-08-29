@@ -1,7 +1,7 @@
 //! Cross-domain route table.
 
+use corelib::host::{MainRouteDrain, RouteDirection};
 use corelib::{OwnerId, RouteId};
-use plugins::host::{MainRouteDrain, RouteDirection};
 use std::sync::Arc;
 
 /// One registered cross-domain route.

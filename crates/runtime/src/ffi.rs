@@ -9,7 +9,7 @@
 //! * null pointer / empty path are rejected (recorded, no retry);
 //! * the C string is copied into Rust-owned data before returning — the
 //!   Swift-side `withCString` pointer is only valid for this call;
-//! * `DataRoot/scsp.toml` is parsed fail-closed BEFORE the worker spawns
+//! * `DataRoot/shiny-song-tools/scsp.toml` is parsed fail-closed BEFORE the worker spawns
 //!   (docs/runtime-crate.md scsp_start sequence) and travels into the worker;
 //! * the one-shot bootstrap worker runs the readiness ladder (ladder 1 polls
 //!   the image list within the bounded deadline in
@@ -71,7 +71,7 @@ fn entry(documents_path: *const c_char) {
             return;
         }
     };
-    // Parse `DataRoot/scsp.toml` before the worker spawns (docs
+    // Parse `DataRoot/shiny-song-tools/scsp.toml` before the worker spawns (docs
     // runtime-crate.md scsp_start sequence). Fail-closed: missing/invalid
     // falls back to defaults with debug forced off.
     let data_root = corelib::DataRoot::new(owned);

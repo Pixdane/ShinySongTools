@@ -13,17 +13,17 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::RestoreError;
-use crate::config::RuntimeConfig;
-use crate::debug::{DebugIntrospection, DebugTopicLookup};
-use crate::hook::{HookBuilder, HookSite, Unpublished};
-use crate::host::{
+use crate::plugin_api::config::RuntimeConfig;
+use crate::plugin_api::debug::{DebugIntrospection, DebugTopicLookup};
+use crate::plugin_api::hook::{HookBuilder, HookSite, Unpublished};
+use crate::plugin_api::host::{
     BoxedStartupSystem, BoxedUpdateSystem, MessageRegister, PluginHost, ResourceInsert,
     RouteDirection, RouteRegistration,
 };
-use crate::phase::{
+use crate::plugin_api::phase::{
     LazyStartupSystem, LazyUpdateSystem, RestoreAction, StartupFunction, UpdateFunction,
 };
-use crate::route::{
+use crate::plugin_api::route::{
     CallbackBoundedReader, CallbackBoundedWriter, CallbackLatestReader, CallbackLatestWriter,
     CallbackSharedReader, CallbackSharedWriter, MainBoundedReader, MainBoundedWriter,
     MainLatestReader, MainLatestWriter, MainSharedReader, MainSharedWriter,
@@ -253,7 +253,7 @@ impl<'host> AppCtx<'host> {
     }
 
     /// callback → main, `shared_latest` semantics. Delivered as
-    /// [`crate::host::SharedEnvelope<T>`] messages.
+    /// [`crate::plugin_api::host::SharedEnvelope<T>`] messages.
     pub fn callback_to_main_shared<T: Send + Sync + 'static + Message>(
         &mut self,
     ) -> Result<(CallbackSharedWriter<T>, MainSharedReader<T>), PluginError> {
@@ -266,7 +266,7 @@ impl<'host> AppCtx<'host> {
             ensure_receiver: Some(MessageRegister {
                 register: Box::new(|world: &mut World| {
                     bevy_ecs::message::MessageRegistry::register_message::<
-                        crate::host::SharedEnvelope<T>,
+                        crate::plugin_api::host::SharedEnvelope<T>,
                     >(world);
                 }),
             }),
@@ -280,7 +280,7 @@ impl<'host> AppCtx<'host> {
     // -- hooks ---------------------------------------------------------------
 
     /// Start the publish → install chain for this target's static site.
-    pub fn hook<T: crate::hook::HookTarget, C: Send + Sync + 'static>(
+    pub fn hook<T: crate::plugin_api::hook::HookTarget, C: Send + Sync + 'static>(
         &mut self,
         site: &'static HookSite<T, C>,
     ) -> HookBuilder<'_, 'host, T, C, Unpublished> {

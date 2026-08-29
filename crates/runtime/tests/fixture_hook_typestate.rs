@@ -10,10 +10,10 @@
 mod common;
 
 use bevy_ecs::prelude::Resource;
+use corelib::define_hook_site;
+use corelib::hook::HookTarget;
+use corelib::{AppCtx, MainLatestWriter, Plugin, PluginError, StartupCtx, UpdateCtx};
 use corelib::{DataRoot, HookError, MethodRef, MethodResolver, RuntimeGate, SlotMemory, TargetId};
-use plugins::define_hook_site;
-use plugins::hook::HookTarget;
-use plugins::{AppCtx, MainLatestWriter, Plugin, PluginError, StartupCtx, UpdateCtx};
 use shiny_song_tools::{App, PluginState};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -34,7 +34,7 @@ pub struct FpsSetting(pub u32); // CallbackPayload via the core blanket impl
 
 /// Callback-domain container shared with the hook.
 pub struct MockSites {
-    pub setting: plugins::CallbackLatestReader<FpsSetting>,
+    pub setting: corelib::CallbackLatestReader<FpsSetting>,
     pub hits: Arc<AtomicUsize>,
 }
 
@@ -63,7 +63,7 @@ struct SettingWriter(MainLatestWriter<FpsSetting>);
 
 /// World resource carrying the install handle for restore assertions.
 #[derive(Resource)]
-struct HookHandle(plugins::hook::InstalledHook<MockTargetMarker, MockSites>);
+struct HookHandle(corelib::hook::InstalledHook<MockTargetMarker, MockSites>);
 
 fn send_setting(
     ctx: UpdateCtx<'_>,
@@ -149,7 +149,7 @@ fn hook_typestate_publish_install_dispatch_restore_quiescence() {
     let gate = RuntimeGate::new();
     let hits = Arc::new(AtomicUsize::new(0));
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-hook")),
         gate.reader(),
     );
@@ -237,6 +237,16 @@ fn hook_typestate_publish_install_dispatch_restore_quiescence() {
         .world_mut()
         .remove_resource::<HookHandle>()
         .expect("handle resource present");
+    let active_result = handle
+        .0
+        .call_original_on_main(&token, |original, method_info| {
+            assert_ne!(method_info, 0, "bind-time MethodInfo is retained");
+            // SAFETY: the fixture original is a real callable function with
+            // the declared target ABI.
+            unsafe { original(123) }
+        })
+        .expect("main-thread active original call succeeds while owned");
+    assert_eq!(active_result, 42);
     handle.0.restore().expect("first restore succeeds");
     assert_eq!(
         slot.load(Ordering::Acquire),
@@ -330,7 +340,7 @@ impl MethodResolver for PickyResolver {
 define_hook_site!(WINDOW_SITE: HookSite<MockTargetMarker, MockSites>);
 
 #[derive(Resource)]
-struct WindowHandle(plugins::hook::InstalledHook<MockTargetMarker, MockSites>);
+struct WindowHandle(corelib::hook::InstalledHook<MockTargetMarker, MockSites>);
 
 struct WindowPlugin;
 
@@ -375,7 +385,7 @@ fn restore_window_passthroughs_original_instead_of_skipping_it() {
 
     let gate = RuntimeGate::new();
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-hook-window")),
         gate.reader(),
     );

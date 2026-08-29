@@ -1,9 +1,9 @@
 //! Non-plugin composition state: config, route table, debug topic registry,
 //! introspection inventory, and the method resolver handle for hooks.
 
+use corelib::RuntimeConfig;
+use corelib::debug::{DebugDecodeFn, DebugTopicChannel, DebugTopicLookup, DebugTopicView};
 use corelib::{DataRoot, MethodResolver};
-use plugins::RuntimeConfig;
-use plugins::debug::{DebugDecodeFn, DebugTopicChannel, DebugTopicLookup, DebugTopicView};
 use std::sync::Arc;
 
 use crate::inventory::PluginInventory;
@@ -72,7 +72,7 @@ impl TopicRegistry {
     /// requests already owned by handler/relay systems are not forcibly
     /// cancelled; their systems stop running with the owner.
     pub(crate) fn fail_pending_requests(&self, owner: corelib::OwnerId) {
-        use plugins::debug::{DebugResponse, DebugServerError, DebugWireError, DebugWireErrorCode};
+        use corelib::debug::{DebugResponse, DebugServerError, DebugWireError, DebugWireErrorCode};
         let entries = self.entries.read().expect("topics lock");
         for entry in entries.iter().filter(|e| e.owner == owner) {
             let queued: Vec<_> = entry

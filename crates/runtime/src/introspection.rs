@@ -1,11 +1,11 @@
 //! Runtime introspection shared state (feeds the `runtime.*` debug topics).
 //!
 //! The App updates this snapshot on every driver transition; the DebugPlugin
-//! reads it through the [`DebugIntrospection`](plugins::debug::DebugIntrospection)
+//! reads it through the [`DebugIntrospection`](corelib::debug::DebugIntrospection)
 //! seam. Read-only for consumers: failures stay in observability events, the
 //! snapshot carries state only.
 
-use plugins::debug::DebugIntrospection;
+use corelib::debug::DebugIntrospection;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

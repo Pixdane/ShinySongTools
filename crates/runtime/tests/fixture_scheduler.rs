@@ -72,7 +72,7 @@ fn on_fresh_thread(body: impl FnOnce() + Send + 'static) {
 
 fn new_app(ctx: &SchedulerContext, name: &str) -> (App, Arc<std::sync::atomic::AtomicUsize>) {
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join(name)),
         ctx.runtime_gate.reader(),
     );
@@ -88,12 +88,12 @@ struct LocalCountingPlugin {
     counter: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl plugins::Plugin for LocalCountingPlugin {
+impl corelib::Plugin for LocalCountingPlugin {
     fn name(&self) -> &'static str {
         "counting"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), corelib::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         let counter = Arc::clone(&self.counter);
         ctx.insert_resource(RunCounter(counter))?;
         ctx.add_update_system(counting_update);
@@ -105,7 +105,7 @@ impl plugins::Plugin for LocalCountingPlugin {
 struct RunCounter(Arc<std::sync::atomic::AtomicUsize>);
 
 fn counting_update(
-    _ctx: plugins::UpdateCtx<'_>,
+    _ctx: corelib::UpdateCtx<'_>,
     counter: bevy_ecs::prelude::Res<RunCounter>,
 ) -> Result<(), corelib::PluginError> {
     counter.0.fetch_add(1, Ordering::AcqRel);
@@ -184,18 +184,18 @@ fn nested_callback_sees_busy_and_only_calls_original() {
 
 struct NestedReentryPlugin;
 
-impl plugins::Plugin for NestedReentryPlugin {
+impl corelib::Plugin for NestedReentryPlugin {
     fn name(&self) -> &'static str {
         "nested-reentry"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), plugins::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         ctx.add_update_system(reenter_from_update);
         Ok(())
     }
 }
 
-fn reenter_from_update(_ctx: plugins::UpdateCtx<'_>) -> Result<(), corelib::PluginError> {
+fn reenter_from_update(_ctx: corelib::UpdateCtx<'_>) -> Result<(), corelib::PluginError> {
     let ctx = *NESTED_CTX.get().expect("nested context installed");
     // SAFETY: the fixture leaked the context for the test's lifetime.
     let ctx = unsafe { &*(ctx as *const SchedulerContext) };
@@ -253,12 +253,12 @@ impl Drop for PanicOnDrop {
 
 struct PanicOnDropPlugin;
 
-impl plugins::Plugin for PanicOnDropPlugin {
+impl corelib::Plugin for PanicOnDropPlugin {
     fn name(&self) -> &'static str {
         "panic-on-drop"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), plugins::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         // The resource's Drop panics; the Startup driver's LIFO rollback
         // removes it OUTSIDE the per-system catch_unwind, producing a
         // frame-level unwind before the original call.
@@ -268,7 +268,7 @@ impl plugins::Plugin for PanicOnDropPlugin {
     }
 }
 
-fn failing_startup(_ctx: plugins::StartupCtx<'_>) -> Result<(), corelib::PluginError> {
+fn failing_startup(_ctx: corelib::StartupCtx<'_>) -> Result<(), corelib::PluginError> {
     Err(corelib::PluginError::Message(
         "startup fails after build insert",
     ))
@@ -279,7 +279,7 @@ fn before_original_panic_compensates_original_exactly_once() {
     let ctx = context_with(None, true);
     on_fresh_thread(move || {
         let mut app = App::new(
-            plugins::RuntimeConfig::default(),
+            corelib::RuntimeConfig::default(),
             DataRoot::new(std::env::temp_dir().join("scsp-fixture-sched-before")),
             ctx.runtime_gate.reader(),
         );
@@ -318,12 +318,12 @@ struct RetentionProbePlugin {
     dropped: Arc<AtomicUsize>,
 }
 
-impl plugins::Plugin for RetentionProbePlugin {
+impl corelib::Plugin for RetentionProbePlugin {
     fn name(&self) -> &'static str {
         "retention-probe"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), plugins::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         ctx.insert_resource(RetentionProbe(Arc::clone(&self.dropped)))
     }
 }
@@ -382,18 +382,18 @@ fn frame_forwards_this_and_method_verbatim_to_original() {
 
 struct FailingStartupPlugin;
 
-impl plugins::Plugin for FailingStartupPlugin {
+impl corelib::Plugin for FailingStartupPlugin {
     fn name(&self) -> &'static str {
         "failing-startup"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), corelib::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         ctx.add_startup_system(failing_startup_system);
         Ok(())
     }
 }
 
-fn failing_startup_system(_ctx: plugins::StartupCtx<'_>) -> Result<(), corelib::PluginError> {
+fn failing_startup_system(_ctx: corelib::StartupCtx<'_>) -> Result<(), corelib::PluginError> {
     Err(corelib::PluginError::Message("owner-local startup failure"))
 }
 

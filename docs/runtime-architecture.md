@@ -23,23 +23,24 @@
 | 文档 | 概念 crate | 权威范围 |
 |---|---|---|
 | [Core crate 设计](core-crate.md) | `core` | 平台基础 API、MainThreadToken、gate、MethodPointer 封装、IL2CPP backend、callback-safe 原语、CompactEvent |
-| [Plugin API 设计](plugin-api.md) | `plugins` | 插件作者可见的 Plugin、AppCtx、phase system、route、hook typestate、错误类型 |
+| [Plugin API 设计](plugin-api.md) | `core::plugin_api` | 插件作者可见的 Plugin、AppCtx、phase system、route、hook typestate、错误类型 |
 | [Runtime：App 与 driver](plugin-system.md) | `runtime` | App、PluginManager、owner scope、固定 driver、惰性初始化、局部回滚 |
 | [Runtime：bootstrap 与 scheduler](runtime-crate.md) | `runtime` | `scsp_start`、bootstrap worker、readiness 阶梯、Handoff、TLS、global failure |
-| [FPS 插件](plugin-api.md#功能模式示例fps-解锁（fps-crate）) | `fps` | Unity 两个静态 setter hook、main→callback latest route、`fps.get`/`fps.set` |
-| [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md) | `runtime`（DebugPlugin）+ 跨 crate | Observability 与 DebugPlugin（JSON-RPC over UDS、自省 topic） |
+| [FPS 插件](plugin-api.md#功能模式示例fps-解锁（unlock_fps-crate）) | `unlock_fps` | Unity 两个静态 setter hook、main→callback latest route、`unlock_fps.get`/`unlock_fps.set` |
+| [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md) | `debug` + `runtime` | Observability 与 DebugPlugin（JSON-RPC over UDS、自省 topic） |
 
-生产 crate 目前为四个：`core`、`plugins`、`fps`、`runtime`（另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `runtime`；功能插件独立成 crate，只依赖 `plugins` 与底层 `core`。
+生产 crate 目前为四个：`core`、`debug`、`unlock_fps`、`runtime`（另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `runtime`；plugin API facade 位于 `core::plugin_api`，功能插件按职责独立成 crate。
 
 ## 依赖方向
 
 ```text
 core
   ↑
-plugins   ←—— 功能插件（只依赖这一层）
-  ↑
-fps       ←—— Unity FPS 功能插件
-runtime（App/driver + bootstrap/scheduler + DebugPlugin）
+core::plugin_api   ←—— 功能插件 API facade
+  ↑                    ↑
+unlock_fps             debug（DebugPlugin / transport）
+  ↑                    ↑
+runtime（App/driver + bootstrap/scheduler）
 ```
 
 ## 第三方采用边界
@@ -89,11 +90,11 @@ PlayTools AKPlugin
 - bootstrap readiness 阶梯中，跨过 image/exports gate 后的 `il2cpp_domain_get` **探测恰好一次**；返回 null 即本次一次性 bootstrap 终止，不轮询重试（实验定案，见 runtime-crate 分册）。gate 之后的元数据查询链中，bridge crate 内部（cache hydration 等）会重读 domain_get——该重读已被两次实机 A/B 实证无害，且由无游戏 fixture（bridge_fake_happy）固化调用模式；本条约束的是探测不轮询，不是全进程调用次数。
 - `panic = "unwind"`；Rust panic 不跨 FFI。每个 boxed system 有 owner-scoped panic boundary；scheduler 热路径有 `SchedulerFrame`/`OriginalPhase` 三阶段守护，original 恰好调用一次。
 - Observability 在最外层启动保护中尽早建立：runtime-owned scoped `tracing::Dispatch` 覆盖所有受控执行根；callback/scheduler 热路径只提交固定大小 `CompactEvent` 到进程级队列，由独立 drain worker 输出。v1 只输出 Apple Unified Logging。
-- 配置唯一来源为 `DataRoot/scsp.toml`（typed `RuntimeConfig`）；缺失按默认值，解析失败 fail-closed（全默认值、debug 强制关闭）。`debug.enabled` 为真时注册 DebugPlugin（JSON-RPC 2.0 over UDS；dispatch 走"DebugPlugin → owner handler system → callback relay"，见 debug 分册），否则不注册、不建 socket。
+- 配置唯一来源为 `DataRoot/shiny-song-tools/scsp.toml`（typed `RuntimeConfig`）；缺失时自动创建空的 fail-closed 配置并使用默认值，解析失败仍 fail-closed（全默认值、debug 强制关闭）。`debug.enabled` 为真时注册 DebugPlugin（JSON-RPC 2.0 over UDS；dispatch 走"DebugPlugin → owner handler system → callback relay"，见 debug 分册），否则不注册、不建 socket。
 
 ## 证据边界
 
-设计可以采用实验仓库已经建立的可行性结论，但实验结果、fixture 结果、生产实现和当前游戏版本实机结果必须分别陈述，任何一层不得自动外推为下一层已经成立。当前实验已为精确版本提供 MethodPointer replacement、callback/original/restore 和 exact-handle IL2CPP 加载的设计依据；生产 workspace 已实现类型驱动 v2 代码骨架与独立 `fps` crate，**FPS 实机验证未开始**——当前只完成静态 target identity、ABI 声明和无游戏编译/单元测试，不能外推为当前游戏版本已生效。
+设计可以采用实验仓库已经建立的可行性结论，但实验结果、fixture 结果、生产实现和当前游戏版本实机结果必须分别陈述，任何一层不得自动外推为下一层已经成立。当前实验已为精确版本提供 MethodPointer replacement、callback/original/restore 和 exact-handle IL2CPP 加载的设计依据；生产 workspace 已实现类型驱动 v2 代码骨架与独立 `unlock_fps` crate，**FPS 实机验证未开始**——当前只完成静态 target identity、ABI 声明和无游戏编译/单元测试，不能外推为当前游戏版本已生效。
 
 ## 非目标
 
@@ -108,6 +109,6 @@ PlayTools AKPlugin
 
 ## 当前待打磨与待设计
 
-待打磨：exact UnityFramework 的 image identity 格式（当前实现仅匹配文件名，身份校验过弱）、`runtime.info` 的 readiness 阶梯结果字段、per-category os_log 句柄（现单 category + target 区分）、生产 DataRoot 下 debug.sock 的 `SUN_LEN` 路径长度上限（容器 bundle-id 过长时 bind 会失败，需设计短路径方案）、DebugPlugin 自省外的 request 生命周期压测。已收敛并实现：四 crate 物理布局、phase 类型、route 三种 mailbox（`LatestCell`/`BoundedQueue`/`SharedSlot`）、hook typestate（slot 事实来源 dispatch）、`define_hook_site!` 宏、owner ledger（`ResourceLedgerEntry`）、Debug dispatch 流、错误体系、config fail-closed、readiness 阶梯 1 轮询参数（`IMAGE_POLL_*`）、compact 事件字段、独立 `fps` 插件。
+待打磨：exact UnityFramework 的 image identity 格式（当前实现仅匹配文件名，身份校验过弱）、`runtime.info` 的 readiness 阶梯结果字段、per-category os_log 句柄（现单 category + target 区分）、生产 DataRoot 下 d.sock 的 `SUN_LEN` 路径长度上限（容器 bundle-id 过长时 bind 会失败，需设计短路径方案）、DebugPlugin 自省外的 request 生命周期压测。已收敛并实现：四 crate 物理布局、phase 类型、route 三种 mailbox（`LatestCell`/`BoundedQueue`/`SharedSlot`）、hook typestate（slot 事实来源 dispatch）、`define_hook_site!` 宏、owner ledger（`ResourceLedgerEntry`）、Debug dispatch 流、错误体系、config fail-closed、readiness 阶梯 1 轮询参数（`IMAGE_POLL_*`）、compact 事件字段、独立 `unlock_fps` 与 `debug` 插件。
 
 待设计：plugin/callback 物理卸载、scheduler quiescence、FPS target 的当前游戏版本实机验证与 restore 证据、翻译插件立项（社区格式兼容 + callback-safe 快照替换协议）、超出薄事件层的高级诊断与 crash artifact。

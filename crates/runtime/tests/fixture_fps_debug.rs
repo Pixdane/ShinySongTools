@@ -1,27 +1,25 @@
 //! 无游戏 fixture — FPS 解锁插件（v1 测试插件）+ DebugPlugin 全链：
 //! 1. 作者自定义 HookTarget + typestate hook（publish → install，gate 关闭）；
 //! 2. main→callback latest 路由：setter 替身读容器最新值；
-//! 3. fps.set（main 域 debug topic）：dispatch → owner handler → FpsState
+//! 3. unlock_fps.set（main 域 debug topic）：dispatch → owner handler → FpsState
 //!    更新 + MainWriter 写 latest → 下一帧 setter 生效；
-//! 4. fps.get：读 FpsState 返回当前值；
-//! 5. runtime.plugins 自省：插件列表含 debug 与 fps；
+//! 4. unlock_fps.get：读 FpsState 返回当前值；
+//! 5. runtime.plugins 自省：插件列表含 debug 与 unlock_fps；
 //! 6. 全链对 mock target 完成（无游戏接触）。
 //!
-//! 需要 `--features debug`；无 feature 时本文件整体跳过。
 //! 对应 docs/plugin-api.md「功能模式示例：FPS 解锁」与 debug 分册。
-
-#![cfg(feature = "debug")]
 
 mod common;
 
 use bevy_ecs::prelude::Resource;
 use corelib::RuntimeGate;
-use corelib::{DataRoot, TargetId};
-use plugins::debug::{DebugHandlerError, MainDebugTopic};
-use plugins::hook::HookTarget;
-use plugins::{
+use corelib::debug::{DebugHandlerError, MainDebugTopic};
+use corelib::hook::HookTarget;
+use corelib::{
     AppCtx, CallbackLatestReader, MainLatestWriter, Plugin, PluginError, StartupCtx, UpdateCtx,
 };
+use corelib::{DataRoot, TargetId};
+use debug::DebugPlugin;
 use shiny_song_tools::App;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -41,7 +39,7 @@ const FPS_TARGET: TargetId = TargetId {
 };
 
 #[derive(Clone, Copy)]
-struct FpsSetting(i32); // CallbackPayload via the core blanket impl
+struct FpsSetting(bool); // CallbackPayload via the core blanket impl
 
 /// The FPS plugin's callback-visible container.
 struct FpsSites {
@@ -66,7 +64,7 @@ impl HookTarget for FpsTargetMarker {
     }
 }
 
-plugins::define_hook_site!(FPS_TARGET_SITE: HookSite<FpsTargetMarker, FpsSites>);
+corelib::define_hook_site!(FPS_TARGET_SITE: HookSite<FpsTargetMarker, FpsSites>);
 
 /// The setter's observable effect: the latest setting it dispatched.
 static SETTER_LAST: AtomicUsize = AtomicUsize::new(0);
@@ -84,7 +82,7 @@ unsafe extern "C" fn fps_setter_replacement(arg: usize) -> usize {
         |cb| {
             cb.container().setter_hits.fetch_add(1, Ordering::AcqRel);
             let latest = cb.container().setting.try_read(cb.cap());
-            let effective = latest.map_or(arg, |setting| setting.0 as usize);
+            let effective = latest.map_or(arg, |setting| if setting.0 { 120 } else { arg });
             SETTER_LAST.store(effective, Ordering::Release);
             cb.call_original(|original| {
                 // SAFETY: real function.
@@ -100,7 +98,7 @@ struct SettingWriter(MainLatestWriter<FpsSetting>);
 
 #[derive(Resource, Default)]
 struct FpsState {
-    target: Mutex<i32>,
+    unlock_fps: Mutex<bool>,
     updates: Arc<AtomicUsize>,
 }
 
@@ -110,7 +108,7 @@ struct FpsState {
 
 struct FpsGet;
 impl MainDebugTopic for FpsGet {
-    const NAME: &'static str = "fps.get";
+    const NAME: &'static str = "unlock_fps.get";
     type Request = FpsGetRequest;
     type Response = FpsGetResponse;
 }
@@ -120,19 +118,19 @@ struct FpsGetRequest {}
 
 #[derive(serde::Serialize)]
 struct FpsGetResponse {
-    target: i32,
+    unlock_fps: bool,
 }
 
 struct FpsSet;
 impl MainDebugTopic for FpsSet {
-    const NAME: &'static str = "fps.set";
+    const NAME: &'static str = "unlock_fps.set";
     type Request = FpsSetRequest;
     type Response = FpsSetResponse;
 }
 
 #[derive(serde::Deserialize)]
 struct FpsSetRequest {
-    target: i32,
+    unlock_fps: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -148,14 +146,14 @@ struct FpsPlugin;
 
 impl Plugin for FpsPlugin {
     fn name(&self) -> &'static str {
-        "fps"
+        "unlock_fps"
     }
 
     fn build(&self, ctx: &mut AppCtx<'_>) -> Result<(), PluginError> {
         // State (main domain).
         let updates = Arc::new(AtomicUsize::new(0));
         ctx.insert_resource(FpsState {
-            target: Mutex::new(30),
+            unlock_fps: Mutex::new(true),
             updates: Arc::clone(&updates),
         })?;
 
@@ -205,8 +203,8 @@ fn fps_get_handler(
     _request: FpsGetRequest,
     state: bevy_ecs::prelude::Res<FpsState>,
 ) -> Result<FpsGetResponse, DebugHandlerError> {
-    let target = *state.target.lock().expect("state");
-    Ok(FpsGetResponse { target })
+    let unlock_fps = *state.unlock_fps.lock().expect("state");
+    Ok(FpsGetResponse { unlock_fps })
 }
 
 fn fps_set_handler(
@@ -218,10 +216,10 @@ fn fps_set_handler(
     ),
 ) -> Result<FpsSetResponse, DebugHandlerError> {
     let (state, writer) = params;
-    *state.target.lock().expect("state") = request.target;
+    *state.unlock_fps.lock().expect("state") = request.unlock_fps;
     state.updates.fetch_add(1, Ordering::AcqRel);
     // The next setter invocation uses the new value via the latest route.
-    let _ = writer.0.try_send(&ctx, FpsSetting(request.target));
+    let _ = writer.0.try_send(&ctx, FpsSetting(request.unlock_fps));
     Ok(FpsSetResponse { applied: true })
 }
 
@@ -250,10 +248,10 @@ fn wait_for<F: FnMut() -> Option<T>, T>(mut poll: F) -> T {
 #[test]
 fn fps_plugin_debug_round_trip_over_uds() {
     let gate = RuntimeGate::new();
-    let data_root = std::env::temp_dir().join(format!("scsp-fps-{}", std::process::id()));
+    let data_root = std::env::temp_dir().join(format!("scsp-unlock_fps-{}", std::process::id()));
     let mut app = App::new(
-        plugins::RuntimeConfig {
-            debug: plugins::DebugConfig { enabled: true },
+        corelib::RuntimeConfig {
+            debug: corelib::DebugConfig { enabled: true },
             ..Default::default()
         },
         DataRoot::new(data_root.clone()),
@@ -267,7 +265,7 @@ fn fps_plugin_debug_round_trip_over_uds() {
 
     // DebugPlugin first (production plugin list order), then the functional
     // plugin.
-    app.add_plugin(shiny_song_tools::debug::DebugPlugin);
+    app.add_plugin(DebugPlugin);
     app.add_plugin(FpsPlugin);
 
     let token = common::fixture_main_token();
@@ -275,7 +273,7 @@ fn fps_plugin_debug_round_trip_over_uds() {
     assert!(startup.retired.is_empty(), "startup must succeed");
     gate.open(); // the runtime layer opens it after Startup
 
-    let socket_path = data_root.join("shiny-song-tools").join("debug.sock");
+    let socket_path = data_root.join("shiny-song-tools").join("d.sock");
     let mut client = UnixStream::connect(&socket_path).expect("debug client connects");
 
     // --- runtime.plugins introspection ---
@@ -294,27 +292,34 @@ fn fps_plugin_debug_round_trip_over_uds() {
         .iter()
         .map(|p| p["name"].as_str().expect("name"))
         .collect();
-    assert_eq!(names, vec!["debug", "fps"], "DebugPlugin registered first");
+    assert_eq!(
+        names,
+        vec!["debug", "unlock_fps"],
+        "DebugPlugin registered first"
+    );
     let fps_row = &response["result"]["plugins"][1];
     assert_eq!(fps_row["state"], "active");
-    assert_eq!(fps_row["topics"][0], "fps.get");
-    assert_eq!(fps_row["topics"][1], "fps.set");
+    assert_eq!(fps_row["topics"][0], "unlock_fps.get");
+    assert_eq!(fps_row["topics"][1], "unlock_fps.set");
 
-    // --- fps.get: initial value from config ---
+    // --- unlock_fps.get: initial value from config ---
     send_frame(
         &mut client,
-        &serde_json::json!({"jsonrpc": "2.0", "id": "g1", "method": "fps.get", "params": {}}),
+        &serde_json::json!({"jsonrpc": "2.0", "id": "g1", "method": "unlock_fps.get", "params": {}}),
     );
     let response = wait_for(|| {
         app.run_update(&common::fixture_main_token());
         read_pending(&mut client)
     });
-    assert_eq!(response["result"]["target"], 30, "initial config value");
+    assert_eq!(
+        response["result"]["unlock_fps"], true,
+        "initial config value"
+    );
 
-    // --- fps.set: dispatch → handler → latest route → setter ---
+    // --- unlock_fps.set: dispatch → handler → latest route → setter ---
     send_frame(
         &mut client,
-        &serde_json::json!({"jsonrpc": "2.0", "id": "s1", "method": "fps.set", "params": {"target": 120}}),
+        &serde_json::json!({"jsonrpc": "2.0", "id": "s1", "method": "unlock_fps.set", "params": {"unlock_fps": true}}),
     );
     let response = wait_for(|| {
         app.run_update(&common::fixture_main_token());

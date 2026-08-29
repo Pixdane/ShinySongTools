@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     addBundlePipeline(b, tools, .{
         .step_name = "bundle",
         .description = "Build, sign, verify and publish AKInterface.bundle",
-        .cargo_features = "debug",
+        .cargo_features = "",
         .cargo_target_dir = "build/target",
         .staticlib_path = "build/target/aarch64-apple-darwin/release/libshiny_song_tools.a",
         .publish_root = "build",
@@ -79,9 +79,8 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
     //    state; this command executes on every entry into the graph. The
     //    staticlib path is declared as a file input of the link step so the
     //    link output is invalidated when the staticlib content changes.
-    //    Features are pipeline-specific: the normal candidate ships the
-    //    runtime-config-gated DebugPlugin capability, while the diagnostic
-    //    candidate replaces bootstrap with the bounded timing probe.
+    //    The normal candidate ships the runtime-config-gated DebugPlugin; only
+    //    diagnostic pipelines use a Cargo feature.
     const cargo_run = b.addSystemCommand(&.{
         "cargo",
         "build",
@@ -92,9 +91,10 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
         options.cargo_target_dir,
         "-p",
         "runtime",
-        "--features",
-        options.cargo_features,
     });
+    if (options.cargo_features.len != 0) {
+        cargo_run.addArgs(&.{ "--features", options.cargo_features });
+    }
     const staticlib = b.path(options.staticlib_path);
 
     // 3. Link the bundle executable. The devshell exports DEVELOPER_DIR /

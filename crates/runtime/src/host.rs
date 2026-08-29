@@ -2,12 +2,12 @@
 //! translating facade calls into world mutations, ledger records, and route
 //! table entries.
 
-use corelib::{DataRoot, GateReader, OwnerId, PluginError, RouteId};
-use plugins::RuntimeConfig;
-use plugins::host::{
+use corelib::RuntimeConfig;
+use corelib::host::{
     BoxedStartupSystem, BoxedUpdateSystem, MessageRegister, PluginHost, ResourceInsert,
     RouteRegistration,
 };
+use corelib::{DataRoot, GateReader, OwnerId, PluginError, RouteId};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -108,21 +108,21 @@ impl PluginHost for HostImpl<'_> {
         Ok(id)
     }
 
-    fn register_restore_any_thread(&mut self, action: plugins::phase::RestoreAction) {
+    fn register_restore_any_thread(&mut self, action: corelib::phase::RestoreAction) {
         self.app.plugins.record_mut(self.owner).effects.push(action);
     }
 
-    fn topic_registry_handle(&mut self) -> Arc<dyn plugins::debug::DebugTopicLookup> {
-        Arc::clone(&self.app.core.topics) as Arc<dyn plugins::debug::DebugTopicLookup>
+    fn topic_registry_handle(&mut self) -> Arc<dyn corelib::debug::DebugTopicLookup> {
+        Arc::clone(&self.app.core.topics) as Arc<dyn corelib::debug::DebugTopicLookup>
     }
 
-    fn introspection_handle(&mut self) -> Option<Arc<dyn plugins::debug::DebugIntrospection>> {
+    fn introspection_handle(&mut self) -> Option<Arc<dyn corelib::debug::DebugIntrospection>> {
         Some(Arc::clone(&self.app.introspection) as _)
     }
 
     fn register_debug_topic_dyn(
         &mut self,
-        registration: plugins::debug::DebugTopicRegistration,
+        registration: corelib::debug::DebugTopicRegistration,
     ) -> Result<(), PluginError> {
         let domain = if registration.callback_domain {
             crate::core_state::TopicDomain::Callback

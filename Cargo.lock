@@ -411,10 +411,13 @@ dependencies = [
 name = "core"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "crossbeam-queue",
  "crossbeam-utils",
  "il2cpp-bridge-rs",
  "libc",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -526,6 +529,15 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+]
+
+[[package]]
+name = "debug"
+version = "0.1.0"
+dependencies = [
+ "core",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -682,16 +694,6 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
-
-[[package]]
-name = "fps"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "core",
- "plugins",
- "serde",
-]
 
 [[package]]
 name = "futures-channel"
@@ -1041,16 +1043,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
-name = "plugins"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1158,9 +1150,8 @@ dependencies = [
  "bevy_ecs",
  "core",
  "crossbeam-queue",
- "fps",
+ "debug",
  "libc",
- "plugins",
  "serde",
  "serde_json",
  "toml 0.9.12+spec-1.1.0",
@@ -1168,6 +1159,7 @@ dependencies = [
  "tracing-os-layer",
  "tracing-subscriber",
  "trybuild",
+ "unlock_fps",
 ]
 
 [[package]]
@@ -1656,6 +1648,15 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unlock_fps"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "core",
+ "serde",
+]
 
 [[package]]
 name = "utf8parse"

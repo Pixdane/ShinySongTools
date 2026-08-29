@@ -217,7 +217,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 
 ### 2.7 Debug 降级为插件 + JSON-RPC
 
-- v1 交付物：`runtime` 内置（feature 门控）一个用**公开 API** 写的 `DebugPlugin`：`Plugin::build` 里注册 UDS transport（runtime 提供窄 handle）、`DebugTopic` trait（保留现设计：`NAME/VERSION/Request/Response`）、main-domain handler 注册为自身 Update system。
+- v1 交付物：独立 `debug` crate 提供一个由配置门控、用**公开 API** 写的 `DebugPlugin`：`Plugin::build` 里注册 UDS transport，`DebugTopic` trait 保留 `NAME/Request/Response`，main-domain handler 注册为自身 Update system。
 - wire 用 **JSON-RPC 2.0 over length-prefixed UDS**（W1）：`method = topic name`，`params = request payload`，`result/error` 直接映射 topic response / `PluginError` 映射；`id` 关联保留。删除自造 envelope、9 错误码词汇表、`ok` 字段等一整页定义（A1 的三套错误词汇随之收敛为 `PluginError` 一套 + JSON-RPC 标准码）。
 - 删除项：callback-domain debug（等第一个真实需求）、topic 多版本、双执行域 pending 状态机、`AppCore::DebugState` 生命周期特例。`debug.enabled` 来自 `scsp.toml`（F3 修正）。插件退役 → 它的 update system 停跑 + route 随 owner ledger 关闭，无需专有规则。
 
@@ -229,7 +229,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 }
 ```
 
-- `DataRoot = <游戏容器 Documents>/shiny-song-tools/`；布局：`scsp.toml`、`translations/`、`logs/`（v1 无 file sink 时可缺省）、`debug.sock`。
+- `DataRoot = <游戏容器 Documents>/shiny-song-tools/`；布局：`scsp.toml`、`translations/`、`logs/`（v1 无 file sink 时可缺省）、`d.sock`。
 - worker 在 `App::new` 前解析：缺失 ⇒ 默认值；解析失败 ⇒ 记录 observability、按全默认值、debug 强制 off（fail-closed：配置只权限能开关，永不解锁未配置的能力）。
 - 子目录由各插件 build 时按需创建（worker 侧，`AnyThread` 阶段），创建失败 = 该插件 build 失败退役。
 

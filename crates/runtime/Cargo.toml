@@ -12,8 +12,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 corelib = { workspace = true }
-plugins = { workspace = true }
-fps = { workspace = true }
+debug = { workspace = true }
+unlock_fps = { workspace = true }
 bevy_ecs = { workspace = true }
 crossbeam-queue = { workspace = true }
 libc = { workspace = true }
@@ -29,5 +29,4 @@ trybuild = { workspace = true }
 
 [features]
 default = []
-debug = []
 bootstrap-timing-probe = []

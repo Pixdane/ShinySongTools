@@ -1,6 +1,6 @@
 //! Runtime configuration as seen by plugins.
 //!
-//! The single configuration source is `DataRoot/scsp.toml`; the runtime
+//! The single configuration source is `DataRoot/shiny-song-tools/scsp.toml`; the runtime
 //! parses it (fail-closed) and hands the typed result to `App::new`. Plugins
 //! only read the typed snapshot through `AppCtx`.
 
@@ -21,17 +21,7 @@ pub struct DebugConfig {
 
 /// `[fps]` section. The plugin is disabled by default; when enabled, setter
 /// hooks force the configured target frame rate and disable v-sync.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FpsConfig {
-    pub enabled: bool,
-    pub target: i32,
-}
-
-impl Default for FpsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            target: 120,
-        }
-    }
+    pub unlock_fps: bool,
 }

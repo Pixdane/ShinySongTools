@@ -22,7 +22,7 @@ fn deps(api: Arc<MockIl2Cpp>) -> BootstrapDeps {
         readiness: Arc::new(MockReadiness::new()),
         resolver: Arc::new(MockResolver::new()),
         data_root: DataRoot::new(std::env::temp_dir().join("scsp-bootstrap-timing-probe")),
-        config: plugins::RuntimeConfig::default(),
+        config: corelib::RuntimeConfig::default(),
         thread_check: Arc::new(|| true),
     }
 }

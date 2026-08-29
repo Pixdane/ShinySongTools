@@ -8,7 +8,7 @@ runtime 负责：
 
 - 导出 `scsp_start` 并保证入口非阻塞、幂等。
 - 定位已加载 UnityFramework，并通过 exact handle 初始化 core IL2CPP backend。
-- 读取 `DataRoot/scsp.toml` 构造 typed `RuntimeConfig`（缺失按默认值，解析失败 fail-closed：全默认值、debug 强制关闭）。
+- 读取 `DataRoot/shiny-song-tools/scsp.toml` 构造 typed `RuntimeConfig`（缺失时自动创建空的 fail-closed 配置并使用默认值，解析失败仍 fail-closed：全默认值、debug 强制关闭）。
 - 构造 App、按固定顺序注册生产插件（`debug.enabled` 时 **DebugPlugin 注册在列表首位**，其后为功能插件）并驱动 worker build。
 - 安装 LateUpdate SchedulerHook。
 - 将 App 一次性交接到 Unity 主线程 TLS。
@@ -44,7 +44,7 @@ AKPlugin.init()
   → 尝试领取进程期一次性启动标记
   → 若已领取：记录 start duplicate 并立即返回
   → 复制并校验路径（拒绝空指针/空路径；无效路径记录后结束本次启动，不重试）
-  → 解析 scsp.toml → RuntimeConfig（缺失按默认；解析失败 fail-closed：全默认 + debug 关闭）
+  → 解析 scsp.toml → RuntimeConfig（缺失自动创建空配置并按默认；解析失败 fail-closed：全默认 + debug 关闭）
   → 启动唯一 bootstrap worker
   → 立即返回
 

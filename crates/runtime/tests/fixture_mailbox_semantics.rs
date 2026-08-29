@@ -14,13 +14,13 @@
 mod common;
 
 use bevy_ecs::prelude::{Message, Resource};
-use corelib::{DataRoot, RuntimeGate};
-use plugins::hook::HookTarget;
-use plugins::{
+use corelib::hook::HookTarget;
+use corelib::{
     AppCtx, CallbackBoundedReader, CallbackBoundedWriter, CallbackLatestReader,
     CallbackSharedReader, MainBoundedWriter, MainLatestWriter, MainSharedWriter, Plugin,
     PluginError, SendOutcome, StartupCtx, UpdateCtx,
 };
+use corelib::{DataRoot, RuntimeGate};
 use shiny_song_tools::{App, PluginState};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -73,7 +73,7 @@ impl HookTarget for FixtureTarget {
     }
 }
 
-plugins::define_hook_site!(MAILBOX_SITE: HookSite<FixtureTarget, MailboxSites>);
+corelib::define_hook_site!(MAILBOX_SITE: HookSite<FixtureTarget, MailboxSites>);
 
 #[derive(Resource)]
 struct Writers {
@@ -208,7 +208,7 @@ impl Plugin for MailboxPlugin {
             }
             Err(err) => {
                 eprintln!("build: publish error: {err}");
-                return Err(plugins::PluginError::Hook(err));
+                return Err(corelib::PluginError::Hook(err));
             }
         };
 
@@ -224,7 +224,7 @@ fn mailbox_three_semantics_and_command_drain_delivery() {
     let gate = RuntimeGate::new();
     let sites_slot: Arc<Mutex<Option<Arc<MailboxSites>>>> = Arc::new(Mutex::new(None));
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-mailbox")),
         gate.reader(),
     );

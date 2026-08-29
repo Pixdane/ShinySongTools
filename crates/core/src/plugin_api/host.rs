@@ -11,8 +11,8 @@ use corelib::{DataRoot, GateReader, MethodResolver, OwnerId, PluginError, RouteI
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
-use crate::config::RuntimeConfig;
-use crate::phase::{RestoreAction, SystemResult};
+use crate::plugin_api::config::RuntimeConfig;
+use crate::plugin_api::phase::{RestoreAction, SystemResult};
 
 /// Boxed insert operation: performs the conflict check and the insert on the
 /// shared AppWorld.
@@ -168,10 +168,12 @@ pub trait PluginHost {
     /// Register one typed debug topic (name duplicates fail the build).
     fn register_debug_topic_dyn(
         &mut self,
-        registration: crate::debug::DebugTopicRegistration,
+        registration: crate::plugin_api::debug::DebugTopicRegistration,
     ) -> Result<(), PluginError>;
     /// Live lookup over registered topics (for the DebugPlugin dispatch).
-    fn topic_registry_handle(&mut self) -> Arc<dyn crate::debug::DebugTopicLookup>;
+    fn topic_registry_handle(&mut self) -> Arc<dyn crate::plugin_api::debug::DebugTopicLookup>;
     /// Runtime introspection data for the built-in `runtime.*` topics.
-    fn introspection_handle(&mut self) -> Option<Arc<dyn crate::debug::DebugIntrospection>>;
+    fn introspection_handle(
+        &mut self,
+    ) -> Option<Arc<dyn crate::plugin_api::debug::DebugIntrospection>>;
 }

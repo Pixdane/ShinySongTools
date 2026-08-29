@@ -84,7 +84,7 @@ pub fn fake_deps(handle: &Arc<ExactHandle>) -> BootstrapDeps {
         readiness: Arc::new(CriWareUnityReadiness::new(Arc::clone(handle))),
         resolver: backend,
         data_root: DataRoot::new(PathBuf::from("/tmp/scsp-fake-documents")),
-        config: plugins::RuntimeConfig::default(),
+        config: corelib::RuntimeConfig::default(),
         thread_check: pthread_main_check(),
     }
 }

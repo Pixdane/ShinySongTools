@@ -6,8 +6,8 @@
 mod common;
 
 use bevy_ecs::prelude::Resource;
+use corelib::{AppCtx, Plugin, PluginError, StartupCtx, UpdateCtx};
 use corelib::{DataRoot, GateReader, RuntimeGate};
-use plugins::{AppCtx, Plugin, PluginError, StartupCtx, UpdateCtx};
 use shiny_song_tools::App;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -81,7 +81,7 @@ fn lazy_initialize_update_system_resolves_startup_resource() {
     let gate = RuntimeGate::new();
     let reader: GateReader = gate.reader();
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-lazy-init")),
         reader,
     );

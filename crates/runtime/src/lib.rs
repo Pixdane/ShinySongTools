@@ -19,8 +19,6 @@ pub mod app;
 pub mod bootstrap;
 pub mod config;
 pub mod core_state;
-#[cfg(feature = "debug")]
-pub mod debug;
 pub mod ffi;
 pub mod gate;
 pub mod handoff;
@@ -43,5 +41,3 @@ pub use scheduler::{
     Il2CppObjectOpaque, LateUpdateFn, MethodInfoOpaque, SchedulerContext, SchedulerHook,
     ThreadIdentityCheck, scheduler_context,
 };
-
-pub use plugins as plugin_api;

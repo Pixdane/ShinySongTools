@@ -36,7 +36,7 @@ fn deps_with_readiness(
         readiness,
         resolver,
         data_root: DataRoot::new(std::env::temp_dir().join("scsp-fixture-bootstrap")),
-        config: plugins::RuntimeConfig::default(),
+        config: corelib::RuntimeConfig::default(),
         thread_check: Arc::new(|| true), // fixture thread stands in for main
     }
 }

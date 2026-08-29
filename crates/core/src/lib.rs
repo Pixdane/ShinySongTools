@@ -25,6 +25,9 @@ pub mod il2cpp_bridge;
 pub mod main_thread;
 pub mod method_slot;
 pub mod original;
+pub mod plugin_api;
+
+extern crate self as corelib;
 
 pub use backend::{
     AttachGuard, DomainHandle, Il2CppApi, ImageHandle, ImageIdentity, MethodResolver,
@@ -42,3 +45,5 @@ pub use il2cpp_bridge::{BridgeBackend, ExactHandle, enumerate_unity_framework};
 pub use main_thread::MainThreadToken;
 pub use method_slot::{MethodPointerSlot, MethodRef, RawSlotMemory, SlotMemory, TargetId};
 pub use original::{OriginalGuard, OriginalPhase};
+pub use plugin_api::*;
+pub use plugin_api::{config, context, debug, hook, host, phase, plugin, route};

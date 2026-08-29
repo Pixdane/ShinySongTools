@@ -1,7 +1,7 @@
 //! 编译失败：Update 形态的函数（首参 `UpdateCtx`）注册为 Startup system
 //! 必须被类型系统拒绝（跨 phase 注册是编译错误）。
 
-use plugins::{AppCtx, Plugin, PluginError, UpdateCtx};
+use corelib::{AppCtx, Plugin, PluginError, UpdateCtx};
 
 fn update_system(_ctx: UpdateCtx<'_>) -> Result<(), PluginError> {
     Ok(())

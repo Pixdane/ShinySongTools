@@ -29,12 +29,13 @@ use corelib::{
     DataRoot, ExactHandle, Il2CppApi, Il2CppError, MethodPointerSlot, MethodRef, MethodResolver,
     RuntimeGate, TargetId,
 };
-use fps::FpsPlugin;
-use plugins::{Plugin, RuntimeConfig};
+use corelib::{Plugin, RuntimeConfig};
+use debug::DebugPlugin;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
+use unlock_fps::FpsPlugin;
 
 /// The single experiment-validated scheduler target.
 pub const SCHEDULER_TARGET: TargetId = TargetId {
@@ -126,23 +127,17 @@ impl BootstrapReadiness for CriWareUnityReadiness {
     }
 }
 
-/// Production plugin list: DebugPlugin (feature-gated, config-gated) FIRST,
+/// Production plugin list: DebugPlugin (config-gated) FIRST,
 /// then functional plugins in fixed order.
 fn production_plugins(config: &RuntimeConfig) -> Vec<Box<dyn Plugin>> {
-    #[cfg(feature = "debug")]
     let mut list: Vec<Box<dyn Plugin>> = Vec::new();
-    #[cfg(not(feature = "debug"))]
-    let list: Vec<Box<dyn Plugin>> = Vec::new();
     // DebugPlugin registers at the HEAD of the list when enabled.
-    #[cfg(feature = "debug")]
     if config.debug.enabled {
-        list.push(Box::new(crate::debug::DebugPlugin));
+        list.push(Box::new(DebugPlugin));
     }
-    if config.fps.enabled {
+    if config.fps.unlock_fps {
         list.push(Box::new(FpsPlugin));
     }
-    #[cfg(not(feature = "debug"))]
-    let _ = config;
     list
 }
 
@@ -457,24 +452,18 @@ fn validate_scheduler_method(method: &MethodRef) -> bool {
 #[cfg(test)]
 mod production_plugin_tests {
     use super::production_plugins;
-    use plugins::{DebugConfig, FpsConfig, RuntimeConfig};
+    use corelib::{DebugConfig, FpsConfig, RuntimeConfig};
 
     #[test]
     fn debug_plugin_precedes_fps_when_both_are_enabled() {
         let config = RuntimeConfig {
             debug: DebugConfig { enabled: true },
-            fps: FpsConfig {
-                enabled: true,
-                target: 144,
-            },
+            fps: FpsConfig { unlock_fps: true },
         };
         let names: Vec<_> = production_plugins(&config)
             .iter()
             .map(|plugin| plugin.name())
             .collect();
-        #[cfg(feature = "debug")]
-        assert_eq!(names, vec!["debug", "fps"]);
-        #[cfg(not(feature = "debug"))]
-        assert_eq!(names, vec!["fps"]);
+        assert_eq!(names, vec!["debug", "unlock_fps"]);
     }
 }

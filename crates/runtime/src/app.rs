@@ -7,17 +7,17 @@
 
 use bevy_ecs::message::MessageRegistry;
 use bevy_ecs::world::World;
+use corelib::phase::RestoreAction;
+use corelib::{AppCtx, Plugin, RuntimeConfig};
 use corelib::{DataRoot, GateReader, MainThreadToken, OwnerId};
-use plugins::phase::RestoreAction;
-use plugins::{AppCtx, Plugin, RuntimeConfig};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use crate::core_state::AppCore;
 use crate::host::HostImpl;
 use crate::manager::{PluginManager, PluginState};
-use crate::plugin_api::debug::DebugTopicLookup;
-use crate::plugin_api::host::MainRouteDrain;
+use corelib::debug::DebugTopicLookup;
+use corelib::host::MainRouteDrain;
 
 /// Summary of one Startup driver pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl App {
                 } = record;
                 let mut order = inserted.last().map_or(0, |e| e.order + 1);
                 for system in startup.iter_mut() {
-                    let mut pending: Vec<plugins::host::ResourceInsert> = Vec::new();
+                    let mut pending: Vec<corelib::host::ResourceInsert> = Vec::new();
                     let result = catch_unwind(AssertUnwindSafe(|| {
                         system.run(&mut self.world, main, &mut pending, effects)
                     }));

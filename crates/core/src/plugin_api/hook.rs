@@ -20,7 +20,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use corelib::{
-    GateReader, HookError, MethodPointerSlot, MethodRef, OriginalGuard, OriginalPhase, TargetId,
+    GateReader, HookError, MainThreadToken, MethodPointerSlot, MethodRef, OriginalGuard,
+    OriginalPhase, TargetId,
 };
 
 use crate::PluginError;
@@ -95,6 +96,8 @@ struct SiteInner<T: HookTarget, C> {
     replacement: T::Original,
     /// Typed-original slot address; `0` until installation captured it.
     original_addr: AtomicUsize,
+    /// Bound MethodInfo address captured alongside the original function.
+    method_info_addr: AtomicUsize,
     /// The single conservative installed flag, shared with the install
     /// handle and the ledger restore action: set once installation is
     /// confirmed by readback, cleared once restore is confirmed.
@@ -361,6 +364,7 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
             },
             replacement,
             original_addr: AtomicUsize::new(0),
+            method_info_addr: AtomicUsize::new(0),
             installed: Arc::new(AtomicBool::new(false)),
             active: std::sync::OnceLock::new(),
         };
@@ -411,6 +415,9 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
         inner
             .original_addr
             .store(slot.original(), Ordering::Release);
+        inner
+            .method_info_addr
+            .store(method.method_info, Ordering::Release);
         if inner
             .active
             .set(ActiveHook {
@@ -435,6 +442,7 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
         let state = Arc::new(HookState {
             slot,
             replacement: replacement_addr,
+            method_info: method.method_info,
             installed: Arc::clone(&inner.installed),
         });
         inner.installed.store(true, Ordering::Release);
@@ -442,25 +450,23 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
         // Ownership-aware restore action; the slot is the final source of
         // truth, drift is never overwritten blindly.
         let restore_state = Arc::clone(&state);
-        self.ctx
-            .host
-            .register_restore_any_thread(crate::phase::RestoreAction::AnyThread(Box::new(
-                move || {
-                    if !restore_state.installed.swap(false, Ordering::AcqRel) {
-                        return Ok(());
+        self.ctx.host.register_restore_any_thread(
+            crate::plugin_api::phase::RestoreAction::AnyThread(Box::new(move || {
+                if !restore_state.installed.swap(false, Ordering::AcqRel) {
+                    return Ok(());
+                }
+                match restore_state.slot.restore(restore_state.replacement) {
+                    Ok(()) => Ok(()),
+                    Err(HookError::OwnershipDrift) => Err(corelib::RestoreError::OwnershipLost),
+                    // Unconfirmed restore: conservatively re-arm so a later
+                    // audit can still observe the unowned state.
+                    Err(_) => {
+                        restore_state.installed.store(true, Ordering::Release);
+                        Err(corelib::RestoreError::Failed)
                     }
-                    match restore_state.slot.restore(restore_state.replacement) {
-                        Ok(()) => Ok(()),
-                        Err(HookError::OwnershipDrift) => Err(corelib::RestoreError::OwnershipLost),
-                        // Unconfirmed restore: conservatively re-arm so a later
-                        // audit can still observe the unowned state.
-                        Err(_) => {
-                            restore_state.installed.store(true, Ordering::Release);
-                            Err(corelib::RestoreError::Failed)
-                        }
-                    }
-                },
-            )));
+                }
+            })),
+        );
 
         Ok(InstalledHook {
             site: self.site,
@@ -475,6 +481,7 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
 struct HookState {
     slot: Arc<MethodPointerSlot>,
     replacement: usize,
+    method_info: usize,
     installed: Arc<AtomicBool>,
 }
 
@@ -522,6 +529,28 @@ impl<T: HookTarget, C> InstalledHook<T, C> {
         self.state.installed.load(Ordering::Acquire)
     }
 
+    /// Invoke the bind-time original on the verified Unity main thread.
+    ///
+    /// The target-owned closure receives both the typed original and its
+    /// captured MethodInfo address, allowing an IL2CPP static wrapper to be
+    /// called after a late hook installation. Slot ownership is checked
+    /// before the call; drift is never bypassed.
+    pub fn call_original_on_main<R>(
+        &self,
+        _main: &MainThreadToken,
+        call: impl FnOnce(T::Original, usize) -> R,
+    ) -> Result<R, HookError> {
+        if !self.state.installed.load(Ordering::Acquire)
+            || self.state.slot.current() != Some(self.state.replacement)
+        {
+            return Err(HookError::OwnershipDrift);
+        }
+        // SAFETY: the address was captured from this target's validated
+        // MethodPointer slot at bind time; the target owns its ABI.
+        let original = unsafe { T::original_from_raw(self.state.slot.original()) };
+        Ok(call(original, self.state.method_info))
+    }
+
     /// Explicit restore. Rejects a second attempt (the first confirmed
     /// restore cleared ownership): the slot no longer holds the
     /// replacement, so a repeat would report drift.
@@ -538,7 +567,7 @@ impl<T: HookTarget, C> InstalledHook<T, C> {
 #[macro_export]
 macro_rules! define_hook_site {
     ($name:ident : HookSite<$target:ty, $container:ty>) => {
-        pub static $name: $crate::hook::HookSite<$target, $container> =
-            $crate::hook::HookSite::new();
+        pub static $name: $crate::plugin_api::hook::HookSite<$target, $container> =
+            $crate::plugin_api::hook::HookSite::new();
     };
 }

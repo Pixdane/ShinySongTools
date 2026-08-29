@@ -295,12 +295,12 @@ pub unsafe extern "C" fn mock_lateupdate(
 #[derive(Default)]
 pub struct CountingUpdatePlugin;
 
-impl plugins::Plugin for CountingUpdatePlugin {
+impl corelib::Plugin for CountingUpdatePlugin {
     fn name(&self) -> &'static str {
         "counting"
     }
 
-    fn build(&self, ctx: &mut plugins::AppCtx<'_>) -> Result<(), corelib::PluginError> {
+    fn build(&self, ctx: &mut corelib::AppCtx<'_>) -> Result<(), corelib::PluginError> {
         ctx.insert_resource(FrameCounter::default())?;
         ctx.add_update_system(counting_update);
         Ok(())
@@ -311,7 +311,7 @@ impl plugins::Plugin for CountingUpdatePlugin {
 pub struct FrameCounter(AtomicUsize);
 
 fn counting_update(
-    _ctx: plugins::UpdateCtx<'_>,
+    _ctx: corelib::UpdateCtx<'_>,
     counter: bevy_ecs::prelude::Res<FrameCounter>,
 ) -> Result<(), corelib::PluginError> {
     counter.0.fetch_add(1, Ordering::AcqRel);

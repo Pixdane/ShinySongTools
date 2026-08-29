@@ -13,7 +13,9 @@ use bevy_ecs::world::World;
 use corelib::{MainThreadToken, PluginError, RestoreError};
 use std::marker::PhantomData;
 
-use crate::host::{ResourceInsert, StartupRun, StartupSystemRunner, UpdateSystemRunner};
+use crate::plugin_api::host::{
+    ResourceInsert, StartupRun, StartupSystemRunner, UpdateSystemRunner,
+};
 
 /// Return type of every phase system.
 pub type SystemResult = Result<(), PluginError>;

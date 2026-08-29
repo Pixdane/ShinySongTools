@@ -1,7 +1,7 @@
 warning: unused import: `HookSite`
  --> tests/ui/unpublished_install.rs:4:21
   |
-4 | use plugins::hook::{HookSite, HookTarget};
+4 | use corelib::hook::{HookSite, HookTarget};
   |                     ^^^^^^^^
   |
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

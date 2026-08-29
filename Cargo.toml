@@ -2,8 +2,8 @@
 resolver = "3"
 members = [
     "crates/core",
-    "crates/plugins",
-    "crates/fps",
+    "crates/debug",
+    "crates/unlock_fps",
     "crates/runtime",
     "crates/testing/fake-unity-framework",
 ]
@@ -16,8 +16,8 @@ repository = "https://github.com/Pixdane/ShinySongTools"
 
 [workspace.dependencies]
 corelib = { package = "core", path = "crates/core" }
-plugins = { path = "crates/plugins" }
-fps = { path = "crates/fps" }
+debug = { path = "crates/debug" }
+unlock_fps = { path = "crates/unlock_fps" }
 
 bevy_ecs = { version = "0.19.1", default-features = false, features = ["std"] }
 il2cpp-bridge-rs = "=0.1.4"

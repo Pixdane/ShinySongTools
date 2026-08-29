@@ -11,8 +11,8 @@
 mod common;
 
 use bevy_ecs::prelude::Resource;
+use corelib::{AppCtx, Plugin, PluginError, StartupCtx, UpdateCtx};
 use corelib::{DataRoot, RuntimeGate};
-use plugins::{AppCtx, Plugin, PluginError, StartupCtx, UpdateCtx};
 use shiny_song_tools::{App, PluginState};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -55,7 +55,7 @@ fn panicking_update(
 
 fn new_app(gate: &RuntimeGate) -> App {
     App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-rollback")),
         gate.reader(),
     )

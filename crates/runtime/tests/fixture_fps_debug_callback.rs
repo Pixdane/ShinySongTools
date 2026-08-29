@@ -6,17 +6,15 @@
 //! 4. 响应经 relay 以 FIFO 配对 id 回到 wire；
 //! 5. 两个排队请求由两次进入分别消化（预算与不覆盖语义）。
 //!
-//! 需要 `--features debug`；无 feature 时本文件整体跳过。
-
-#![cfg(feature = "debug")]
 
 mod common;
 
 use corelib::RuntimeGate;
+use corelib::debug::{CallbackDebugEndpoints, CallbackDebugTopic};
+use corelib::hook::HookTarget;
+use corelib::{AppCtx, Plugin, PluginError};
 use corelib::{DataRoot, TargetId};
-use plugins::debug::{CallbackDebugEndpoints, CallbackDebugTopic};
-use plugins::hook::HookTarget;
-use plugins::{AppCtx, Plugin, PluginError};
+use debug::DebugPlugin;
 use shiny_song_tools::App;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -37,7 +35,7 @@ const PROBE_TARGET: TargetId = TargetId {
 
 struct FpsProbe;
 impl CallbackDebugTopic for FpsProbe {
-    const NAME: &'static str = "fps.probe";
+    const NAME: &'static str = "unlock_fps.probe";
     type Request = FpsProbeRequest;
     type Response = FpsProbeResponse;
 }
@@ -85,7 +83,7 @@ impl HookTarget for ProbeTargetMarker {
     }
 }
 
-plugins::define_hook_site!(PROBE_TARGET_SITE: HookSite<ProbeTargetMarker, ProbeSites>);
+corelib::define_hook_site!(PROBE_TARGET_SITE: HookSite<ProbeTargetMarker, ProbeSites>);
 
 unsafe extern "C" fn probe_setter_replacement(arg: usize) -> usize {
     PROBE_TARGET_SITE.dispatch(
@@ -117,7 +115,7 @@ struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn name(&self) -> &'static str {
-        "fps"
+        "unlock_fps"
     }
 
     fn build(&self, ctx: &mut AppCtx<'_>) -> Result<(), PluginError> {
@@ -182,8 +180,8 @@ fn callback_domain_debug_round_trip_over_uds() {
     let gate = RuntimeGate::new();
     let data_root = std::env::temp_dir().join(format!("scsp-probe-{}", std::process::id()));
     let mut app = App::new(
-        plugins::RuntimeConfig {
-            debug: plugins::DebugConfig { enabled: true },
+        corelib::RuntimeConfig {
+            debug: corelib::DebugConfig { enabled: true },
             ..Default::default()
         },
         DataRoot::new(data_root.clone()),
@@ -195,7 +193,7 @@ fn callback_domain_debug_round_trip_over_uds() {
 
     // DebugPlugin first (production plugin list order), then the functional
     // plugin.
-    app.add_plugin(shiny_song_tools::debug::DebugPlugin);
+    app.add_plugin(DebugPlugin);
     app.add_plugin(ProbePlugin);
 
     let token = common::fixture_main_token();
@@ -203,13 +201,13 @@ fn callback_domain_debug_round_trip_over_uds() {
     assert!(startup.retired.is_empty(), "startup must succeed");
     gate.open(); // the runtime layer opens it after Startup
 
-    let socket_path = data_root.join("shiny-song-tools").join("debug.sock");
+    let socket_path = data_root.join("shiny-song-tools").join("d.sock");
     let mut client = UnixStream::connect(&socket_path).expect("debug client connects");
 
     // --- single request: dispatch → relay slot → callback entry → wire ---
     send_frame(
         &mut client,
-        &serde_json::json!({"jsonrpc": "2.0", "id": "c1", "method": "fps.probe", "params": {"scale": 2}}),
+        &serde_json::json!({"jsonrpc": "2.0", "id": "c1", "method": "unlock_fps.probe", "params": {"scale": 2}}),
     );
     let mut response = None;
     for _ in 0..500 {
@@ -226,11 +224,11 @@ fn callback_domain_debug_round_trip_over_uds() {
     // --- budget + no-overwrite: two queued requests, one per entry ---
     send_frame(
         &mut client,
-        &serde_json::json!({"jsonrpc": "2.0", "id": "c2", "method": "fps.probe", "params": {"scale": 3}}),
+        &serde_json::json!({"jsonrpc": "2.0", "id": "c2", "method": "unlock_fps.probe", "params": {"scale": 3}}),
     );
     send_frame(
         &mut client,
-        &serde_json::json!({"jsonrpc": "2.0", "id": "c3", "method": "fps.probe", "params": {"scale": 4}}),
+        &serde_json::json!({"jsonrpc": "2.0", "id": "c3", "method": "unlock_fps.probe", "params": {"scale": 4}}),
     );
 
     let mut got: Vec<serde_json::Value> = Vec::new();

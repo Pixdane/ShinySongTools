@@ -3,7 +3,7 @@
 状态：v2 设计（2026-08-29 修订）。
 
 - Observability（Logging + Diagnostics）：v1 薄层设计沿用，未改动语义。
-- Debug：改为 **DebugPlugin**（`runtime` 内置、feature 门控的普通插件）+ **JSON-RPC 2.0** over UDS；定位为**插件开发调试工具**（含运行时自省 topic），不是终端用户控制面板。v1 交付 main 与 callback 两个执行域。
+- Debug：由独立 `debug` crate 提供 **DebugPlugin**，按配置注册的普通插件 + **JSON-RPC 2.0** over UDS；定位为**插件开发调试工具**（含运行时自省 topic），不是终端用户控制面板。v1 交付 main 与 callback 两个执行域。
 
 本文记录两个横跨各 crate 的系统：基于 `tracing` 的 Observability，以及可选的 Debug Control Plane。
 
@@ -62,7 +62,7 @@ Observability queue 与业务 route 可复用同一底层 bounded queue crate，
 
 ## Debug：定位与生命周期
 
-- DebugPlugin 是 `runtime` 内的普通插件（feature `debug` 编译），使用公开 Plugin API + 同 crate 内部的 transport 设施；不再有 `AppCore::DebugState` 特例或内建 driver 阶段。
+- DebugPlugin 是独立 `debug` crate 提供的普通插件，使用 core 中的 Plugin API + crate 内部 transport 设施；不再有 `AppCore::DebugState` 特例或内建 driver 阶段。
 - 唯一启用配置为 `scsp.toml` 的 `debug.enabled`（默认 `false`）。为 `true` 时 runtime 把 DebugPlugin 注册在生产插件列表**首位**；为 `false` 时不注册、不建 socket、无任何运行时成本。
 - DebugPlugin 的 build 在 worker 阶段创建 UDS listener 与 I/O worker（AnyThread 阶段允许），启动失败只使 Debug 不可用（I/O worker 记录 observability、后续 request 回 `runtime_unavailable`），不影响其它插件与游戏。transport 生命周期到进程退出为止：没有运行期停止协议；客户端感知的"服务消失"只有进程退出（连接关闭）。socket 残留由下次启动 build 时 unlink 前置清理。
 - 所有 debug route 的有效条件包含 RuntimeGate 与 owner PluginGate。总 gate 关闭后不再向任何 handler 投递新 request；已 pending 的统一回复 `runtime_unavailable`。owner 退役后其 topics 的 request 回复 `plugin_unavailable`。
@@ -70,12 +70,12 @@ Observability queue 与业务 route 可复用同一底层 bounded queue crate，
 
 ## Debug：wire 与 transport（JSON-RPC 2.0）
 
-v1 transport 为本机 Unix domain socket + length-prefixed JSON-RPC 2.0，不加 HTTP/WebSocket/浏览器 bridge。唯一 socket 路径为入口 Documents 路径下 `shiny-song-tools/debug.sock`；权限 0600；v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接集合；accept 队列非阻塞轮询，正在服务时到达的新连接立即关闭）。每个 frame 先 4 字节 big-endian 长度再 JSON UTF-8 bytes，长度与 frame 受固定内部上限；超限回 `payload_too_large` 并保持连接。transport 的请求/响应队列有界：请求队列溢出回 `queue_full`，响应队列溢出丢弃最新响应（客户端停止读取不得撑大运行时内存）。request 与 response 携带 connection generation：连接断开后，旧会话尚未处理的请求被丢弃、迟到响应不写入新连接，会话之间不串扰。
+v1 transport 为本机 Unix domain socket + length-prefixed JSON-RPC 2.0，不加 HTTP/WebSocket/浏览器 bridge。唯一 socket 路径为入口 Documents 路径下 `shiny-song-tools/d.sock`；权限 0600；v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接集合；accept 队列非阻塞轮询，正在服务时到达的新连接立即关闭）。每个 frame 先 4 字节 big-endian 长度再 JSON UTF-8 bytes，长度与 frame 受固定内部上限；超限回 `payload_too_large` 并保持连接。transport 的请求/响应队列有界：请求队列溢出回 `queue_full`，响应队列溢出丢弃最新响应（客户端停止读取不得撑大运行时内存）。request 与 response 携带 connection generation：连接断开后，旧会话尚未处理的请求被丢弃、迟到响应不写入新连接，会话之间不串扰。
 
 request（JSON-RPC 2.0）：
 
 ```json
-{ "jsonrpc": "2.0", "id": "req-123", "method": "fps.set", "params": { "target": 120 } }
+{ "jsonrpc": "2.0", "id": "req-123", "method": "unlock_fps.set", "params": { "unlock_fps": true } }
 ```
 
 成功 response：
@@ -109,7 +109,7 @@ request（JSON-RPC 2.0）：
 
 ```rust
 trait DebugTopic: 'static {
-    const NAME: &'static str;                 // wire method，如 "fps.set"
+    const NAME: &'static str;                 // wire method，如 "unlock_fps.set"
     type Request: serde::de::DeserializeOwned + Send + 'static;
     type Response: serde::Serialize + Send + 'static;
 }
@@ -166,7 +166,7 @@ DebugPlugin 自带只读自省 topic（main 域），数据取自 `PluginInvento
 | core | transport-neutral envelope 之外的公共件：typed mailbox 原语（`SharedSlot`）、`CompactEvent`；不持有 plugin route |
 | plugin API | `DebugTopic` trait 与 `register_main_debug` / `register_callback_debug`；自动登记 handler/relay system |
 | runtime（App/driver） | AppCore 持有 topic registry 与 PluginInventory；debug handler/relay 是普通 Update system，无常设阶段 |
-| runtime（DebugPlugin） | UDS transport、JSON-RPC framing、pending/correlation、dispatch、自省 topic |
+| debug crate（DebugPlugin） | UDS transport、JSON-RPC framing、pending/correlation、dispatch、自省 topic |
 
 ## 待打磨与待设计汇总
 

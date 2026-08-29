@@ -10,9 +10,12 @@ repository.workspace = true
 name = "corelib"
 
 [dependencies]
+bevy_ecs = { workspace = true }
 crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
 il2cpp-bridge-rs = { workspace = true }
 libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

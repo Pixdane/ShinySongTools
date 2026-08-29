@@ -1,11 +1,8 @@
-//! Plugin-author-facing API for the Shiny Song Tools plugin platform.
+//! Plugin-facing API layer.
 //!
-//! This crate is the only surface functional plugins depend on. It never
-//! exposes `PluginManager`, the driver, `Handoff`, owner ledgers, or the
-//! runtime bootstrap; every registration goes through the [`AppCtx`]
-//! facade, which is backed by an internal host trait implemented by the
-//! runtime. Hook targets (ABI wrappers) are authored and reviewed by plugin
-//! authors themselves — personal use, trusted boundary, no semver promise.
+//! This layer lives in the core crate so functional plugins share one stable
+//! dependency boundary with the platform primitives. Runtime owns the host
+//! implementation; plugins only consume the facade and typed capabilities.
 
 pub mod config;
 pub mod context;
@@ -19,8 +16,9 @@ pub mod route;
 pub use config::{DebugConfig, FpsConfig, RuntimeConfig};
 pub use context::AppCtx;
 pub use debug::{
-    DebugHandlerError, DebugResponse, DebugServerError, DebugTopicChannel, DebugWireError,
-    DebugWireErrorCode, MainDebugTopic,
+    CallbackDebugEndpoints, CallbackDebugTopic, DebugDecodeFn, DebugHandlerError,
+    DebugIntrospection, DebugResponse, DebugServerError, DebugTopicChannel, DebugTopicLookup,
+    DebugTopicRegistration, DebugTopicView, DebugWireError, DebugWireErrorCode, MainDebugTopic,
 };
 pub use hook::{
     Callback, CallbackCtx, HookBuilder, HookSite, HookTarget, InstalledHook, Published, Unpublished,
@@ -37,10 +35,4 @@ pub use route::{
     CallbackBoundedReader, CallbackBoundedWriter, CallbackLatestReader, CallbackLatestWriter,
     CallbackSharedReader, CallbackSharedWriter, MainBoundedReader, MainBoundedWriter,
     MainLatestReader, MainLatestWriter, MainSharedReader, MainSharedWriter,
-};
-
-// The single error chain visible to plugin authors.
-pub use corelib::{
-    CallbackPayload, GateReader, HookError, Il2CppError, MainThreadToken, PluginError,
-    RestoreError, SendOutcome,
 };

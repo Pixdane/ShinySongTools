@@ -3,17 +3,17 @@
 ;; 协议：Unix domain socket + 4 字节 big-endian 长度前缀 + JSON-RPC 2.0 body。
 ;;
 ;; 一次性调用（bb debug 任务使用）：
-;;   (call "/path/to/debug.sock" "runtime.plugins" {})
+;;   (call "/path/to/d.sock" "runtime.plugins" {})
 ;;
 ;; REPL 工作流（推荐，交互式调试）：
 ;;   bb --init tools/debug_client.clj -r
 ;;   => (call "runtime.plugins")        ; socket 从 local.edn 自动推导
-;;   => (call "fps.set" {:target 120})
+;;   => (call "unlock_fps.set" {:unlock_fps true})
 ;;   => (call "runtime.gates")
 ;;
 ;; Socket 解析顺序：显式传参 > SCSP_DEBUG_SOCKET 环境变量 > local.edn 派生
 ;; （tools/local_config.clj：游戏 .app → Info.plist bundle id → 容器
-;; Documents/shiny-song-tools/debug.sock）。
+;; Documents/shiny-song-tools/d.sock）。
 ;;
 ;; 响应始终是完整 JSON-RPC map（:id / :result / :error），`:error` 不抛异常，
 ;; 由调用方判读；传输失败（socket 不存在、连接被拒、连接中断）抛 ex-info。

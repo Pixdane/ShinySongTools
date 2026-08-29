@@ -305,11 +305,11 @@ bb bootstrap-probe patch --expected-executable-sha <sha256>
 
 ```sh
 bb debug runtime.plugins
-bb debug fps.set '{"target":120}'
+bb debug unlock_fps.set '{"unlock_fps":true}'
 bb debug --socket <path> runtime.info
 ```
 
-- socket 默认从 `local.edn` 推导：`.app` → `Info.plist` 的 bundle ID → 容器 `Documents/shiny-song-tools/debug.sock`；`--socket` 可显式覆盖。
+- socket 默认从 `local.edn` 推导：`.app` → `Info.plist` 的 bundle ID → 容器 `Documents/shiny-song-tools/d.sock`；`--socket` 可显式覆盖。
 - local.edn 不存在时自动创建空白模板并以非零状态退出；游戏未运行或 `debug.enabled` 未开时 socket 不存在，调用报 `socket-missing`。
 - 响应为完整 JSON-RPC envelope（成功 `result`，失败 `error.code` + `data.code`），pretty print 输出。
 
@@ -318,7 +318,7 @@ bb debug --socket <path> runtime.info
 ```sh
 bb --init tools/debug_client.clj -r
 ;; => (call "runtime.plugins")
-;; => (call "fps.set" {:target 120})
+;; => (call "unlock_fps.set" {:unlock_fps true})
 ;; => (call "runtime.gates")
 ```
 

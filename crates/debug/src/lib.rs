@@ -1,4 +1,4 @@
-//! Debug control plane as a plain plugin (feature `debug`).
+//! Debug control plane as an ordinary plugin crate.
 //!
 //! JSON-RPC 2.0 over a Unix domain socket (docs/debug-diagnostics-logging.md):
 //! length-prefixed frames (4-byte big-endian + UTF-8 JSON), single client,
@@ -20,10 +20,10 @@
 //! every route requires the runtime gate AND the owner plugin gate; after a
 //! global failure all new requests answer `runtime_unavailable`.
 
-use plugins::debug::{
+use corelib::debug::{
     DebugIntrospection, DebugResponse, DebugServerError, DebugTopicLookup, DebugWireErrorCode,
 };
-use plugins::{AppCtx, Plugin, PluginError};
+use corelib::{AppCtx, Plugin, PluginError};
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -31,34 +31,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Frame size ceiling; oversize answers `payload_too_large` and keeps the
-/// connection (the oversized payload is discarded).
-const MAX_FRAME_BYTES: u32 = 1024 * 1024;
-
-/// Bounded transport inbox: decoded requests awaiting the dispatch Update
-/// system. Overflow answers `queue_full` for the offending frame.
-const MAX_INBOX_REQUESTS: usize = 128;
-
-/// Bounded transport outbox: encoded responses awaiting the wire. Overflow
-/// drops the newest response (the client stopped reading; it must not grow
-/// runtime memory).
-const MAX_OUTBOX_RESPONSES: usize = 256;
-
-/// Decoded wire request. `generation` identifies the connection this frame
-/// arrived on; the dispatch system drops requests of earlier generations.
-pub struct WireRequest {
-    pub id: serde_json::Value,
-    pub method: String,
-    pub params: serde_json::Value,
-    pub generation: u64,
-}
-
-/// Fully formed response body (the JSON-RPC envelope minus the frame
-/// length) plus the connection generation it belongs to.
-pub struct WireResponse {
-    pub body: serde_json::Value,
-    pub generation: u64,
-}
+mod protocol;
+pub use protocol::{
+    MAX_FRAME_BYTES, MAX_INBOX_REQUESTS, MAX_OUTBOX_RESPONSES, WireRequest, WireResponse,
+};
 
 /// Shared transport state between the I/O worker and the dispatch system.
 pub struct DebugTransport {
@@ -111,12 +87,7 @@ impl DebugTransport {
         let worker_transport = Arc::clone(&transport);
         std::thread::Builder::new()
             .name("scsp-debug-io".to_owned())
-            .spawn(move || {
-                // The I/O worker is a runtime-owned execution root: scoped
-                // dispatch so its tracing calls reach Unified Logging.
-                let _obs = crate::observability::scope();
-                io_worker(listener, worker_transport)
-            })?;
+            .spawn(move || io_worker(listener, worker_transport))?;
         Ok(transport)
     }
 
@@ -450,7 +421,7 @@ impl Plugin for DebugPlugin {
     }
 
     fn build(&self, ctx: &mut AppCtx<'_>) -> Result<(), PluginError> {
-        let socket_path = ctx.data_root().join("shiny-song-tools").join("debug.sock");
+        let socket_path = ctx.data_root().join("shiny-song-tools").join("d.sock");
         let runtime_gate = ctx.runtime_gate_reader();
         let transport = DebugTransport::bind(socket_path, runtime_gate).map_err(PluginError::Io)?;
         let topics = ctx.debug_topic_registry();
@@ -464,7 +435,7 @@ impl Plugin for DebugPlugin {
             introspection,
         };
         ctx.add_update_system(
-            move |_ctx: plugins::UpdateCtx<'_>| -> plugins::SystemResult {
+            move |_ctx: corelib::UpdateCtx<'_>| -> corelib::SystemResult {
                 dispatch.run();
                 Ok(())
             },

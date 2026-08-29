@@ -33,13 +33,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::PluginError;
 use crate::context::AppCtx;
-use crate::hook::CallbackCtx;
-use crate::host::BoxedUpdateSystem;
-use crate::phase::{SystemResult, UpdateCtx};
+use crate::plugin_api::hook::CallbackCtx;
+use crate::plugin_api::host::BoxedUpdateSystem;
+use crate::plugin_api::phase::{SystemResult, UpdateCtx};
 
 /// A typed main-domain debug topic.
 pub trait MainDebugTopic: 'static {
-    /// Wire method name (e.g. `fps.set`).
+    /// Wire method name (e.g. `unlock_fps.set`).
     const NAME: &'static str;
     type Request: DeserializeOwned + Send + Sync + 'static;
     type Response: Serialize + Send + 'static;
@@ -279,8 +279,8 @@ pub(crate) struct DebugHandlerSystem<T: MainDebugTopic, Marker, H: MainDebugHand
     marker: core::marker::PhantomData<fn() -> T>,
 }
 
-impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>> crate::host::UpdateSystemRunner
-    for DebugHandlerSystem<T, Marker, H>
+impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>>
+    crate::plugin_api::host::UpdateSystemRunner for DebugHandlerSystem<T, Marker, H>
 {
     fn run(&mut self, world: &mut World, main: &crate::MainThreadToken) -> SystemResult {
         // Fast path: nothing queued.
@@ -512,7 +512,7 @@ pub(crate) struct CallbackRelaySystem<T: CallbackDebugTopic> {
     in_flight: std::collections::VecDeque<(serde_json::Value, u64)>,
 }
 
-impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySystem<T> {
+impl<T: CallbackDebugTopic> crate::plugin_api::host::UpdateSystemRunner for CallbackRelaySystem<T> {
     fn run(&mut self, _world: &mut World, _main: &crate::MainThreadToken) -> SystemResult {
         // 1. Deliver one queued request when the slot is free (no overwrite
         //    of an unconsumed request — docs: 新 request 不覆盖旧 request).

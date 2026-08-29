@@ -1,0 +1,12 @@
+[package]
+name = "debug"
+description = "Debug control-plane plugin for Shiny Song Tools."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+corelib = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

@@ -14,9 +14,9 @@ use bevy_ecs::world::World;
 use corelib::{BoundedQueue, CallbackPayload, LatestCell, SendOutcome, SharedSlot};
 use std::sync::Arc;
 
-use crate::hook::CallbackCtx;
-use crate::host::{MainRouteDrain, SharedEnvelope};
-use crate::phase::UpdateCtx;
+use crate::plugin_api::hook::CallbackCtx;
+use crate::plugin_api::host::{MainRouteDrain, SharedEnvelope};
+use crate::plugin_api::phase::UpdateCtx;
 
 // ---------------------------------------------------------------------------
 // main → callback, latest semantics (payload: CallbackPayload, i.e. Copy)

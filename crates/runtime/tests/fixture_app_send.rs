@@ -6,8 +6,8 @@
 mod common;
 
 use bevy_ecs::prelude::Resource;
+use corelib::{AppCtx, Plugin, PluginError, UpdateCtx};
 use corelib::{DataRoot, RuntimeGate};
-use plugins::{AppCtx, Plugin, PluginError, UpdateCtx};
 use shiny_song_tools::App;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -45,7 +45,7 @@ fn app_is_send_and_runs_after_cross_thread_handoff() {
 
     let gate = RuntimeGate::new();
     let mut app = App::new(
-        plugins::RuntimeConfig::default(),
+        corelib::RuntimeConfig::default(),
         DataRoot::new(std::env::temp_dir().join("scsp-fixture-app-send")),
         gate.reader(),
     );

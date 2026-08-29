@@ -2,8 +2,8 @@
 
 use bevy_ecs::world::World;
 use corelib::OwnerId;
-use plugins::host::{BoxedStartupSystem, BoxedUpdateSystem};
-use plugins::phase::RestoreAction;
+use corelib::host::{BoxedStartupSystem, BoxedUpdateSystem};
+use corelib::phase::RestoreAction;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
