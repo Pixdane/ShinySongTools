@@ -1,6 +1,8 @@
 ;; Babashka tasks (docs/tasks.md).
 
-{:tasks
+{:paths ["tools"]
+
+ :tasks
  {bundle
   {:doc "Bundle 操作。用法: bb bundle build"
    :requires ([cheshire.core :as json])
@@ -29,4 +31,30 @@
 
        (throw
         (ex-info "用法: bb bundle build"
-                 {:args *command-line-args*}))))}}}
+                 {:args *command-line-args*}))))}
+
+  debug
+  {:doc "调用 debug socket。用法: bb debug [--socket <path>] <method> [json-params]
+
+内置 method：runtime.plugins / runtime.gates / runtime.info，
+插件注册的 topic（如 fps.get / fps.set / fps.probe）。
+socket 默认从 local.edn 的游戏 .app 推导，或用 --socket 显式指定。
+交互式 REPL：bb --init tools/debug_client.clj -r"
+   :requires ([cheshire.core :as json]
+              [debug-client :as dc])
+   :task
+   (do
+     (let [args (vec *command-line-args*)
+           [socket args] (if (= "--socket" (first args))
+                           [(second args) (vec (drop 2 args))]
+                           [nil args])
+           method (first args)
+           params (if-let [raw (second args)]
+                    (json/parse-string raw)
+                    {})]
+       (when (nil? method)
+         (println "用法: bb debug [--socket <path>] <method> [json-params]")
+         (println "method 例: runtime.plugins / runtime.gates / runtime.info / fps.set")
+         (System/exit 1))
+       (let [response (dc/call socket method params)]
+         (println (json/generate-string response {:pretty true})))))}}}

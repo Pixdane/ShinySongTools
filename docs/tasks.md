@@ -117,7 +117,7 @@ bb bundle restore
 - `:game/:app` 是非空绝对路径字符串。
 - 路径解析后指向现有 `.app`，且满足游戏目标路径保护规则。
 
-从 `.app/Contents/Info.plist` 能可靠推导的 bundle ID、executable 名称和进程身份不重复写入 `local.edn`。bundle 相对路径、artifact 路径、构建参数、事务 fingerprint 和每次操作的 executable SHA-256 确认值也不属于本地配置。
+从 `.app` 内 `Info.plist` 能可靠推导的 bundle ID、executable 名称和进程身份不重复写入 `local.edn`。PlayCover 装的是 iOS 扁平 bundle（`Info.plist` 在 bundle 根），加载器同时兼容 macOS 布局（`Contents/Info.plist`）；PlugIns 路径按检测到的布局派生。bundle 相对路径、artifact 路径、构建参数、事务 fingerprint 和每次操作的 executable SHA-256 确认值也不属于本地配置。
 
 配置文件创建、EDN 解析、schema 校验、路径规范化和目标路径保护必须集中在一个可复用的公共加载入口中，例如：
 
@@ -276,6 +276,31 @@ bb bundle patch \
 恢复同样先创建并验证同卷 staged bundle，再进行重命名替换。不得先删除 installed 后直接复制 baseline，以免中途失败时留下不完整的正式路径。
 
 `patch` 和 `restore` 的实际执行属于游戏修改操作，需要针对确切 executable SHA-256 的明确批准。完整 fingerprint 负责事务完整性；executable SHA-256 作为简短、明确的人工批准身份。task 的存在或先前执行过 `status` 不构成修改授权。
+
+## `debug`
+
+调用运行时 debug socket（JSON-RPC 2.0 over Unix domain socket，协议见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)）：
+
+```sh
+bb debug runtime.plugins
+bb debug fps.set '{"target":120}'
+bb debug --socket <path> runtime.info
+```
+
+- socket 默认从 `local.edn` 推导：`.app` → `Info.plist` 的 bundle ID → 容器 `Documents/shiny-song-tools/debug.sock`；`--socket` 可显式覆盖。
+- local.edn 不存在时自动创建空白模板并以非零状态退出；游戏未运行或 `debug.enabled` 未开时 socket 不存在，调用报 `socket-missing`。
+- 响应为完整 JSON-RPC envelope（成功 `result`，失败 `error.code` + `data.code`），pretty print 输出。
+
+交互式 REPL（推荐调试工作流）：
+
+```sh
+bb --init tools/debug_client.clj -r
+;; => (call "runtime.plugins")
+;; => (call "fps.set" {:target 120})
+;; => (call "runtime.gates")
+```
+
+socket 解析顺序：显式传参 > `SCSP_DEBUG_SOCKET` 环境变量 > `local.edn` 推导。
 
 ## `fix-game`
 
