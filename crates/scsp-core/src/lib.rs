@@ -35,7 +35,7 @@ pub use container::{BoundedQueue, CallbackPayload, LatestCell, SendOutcome, Shar
 pub use error::{HookError, Il2CppError, PluginError, RestoreError};
 pub use event::{
     CALLBACK_EVENT_QUEUE_CAPACITY, CallbackObservability, CompactEvent, CompactEventCode,
-    CompactLevel, CompactOwnerId, CompactSiteId,
+    CompactLevel, CompactOwnerId, CompactSiteId, process_event_queue,
 };
 pub use gate::{GateReader, RuntimeGate};
 pub use il2cpp_bridge::{BridgeBackend, ExactHandle, enumerate_unity_framework};

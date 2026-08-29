@@ -99,7 +99,7 @@ pub struct CallbackIl2Cpp(Arc<Il2CppBackend>);
 
 `Il2CppBackend` 是否能够安全实现 `Send + Sync` 必须由具体字段、动态库 handle 生命周期和每个公开方法的线程约束证明，不能仅为满足 Resource bound 添加无依据的 `unsafe impl`。
 
-bootstrap worker 使用 IL2CPP API 前必须遵守显式 attach 生命周期：等待 domain 非空（单次调用，见 runtime-crate 分册 readiness 阶梯），检查当前 worker 是否已附着，只在未附着时调用 thread attach，并用 RAII guard 仅 detach 本次自己建立的 attachment。callback 侧 capability 不得隐式 attach/detach 任意线程。
+bootstrap worker 使用 IL2CPP API 前必须遵守显式 attach 生命周期：等待 domain 非空（阶梯 3 的探测单次调用，见 runtime-crate 分册 readiness 阶梯），检查当前 worker 是否已附着，只在未附着时调用 thread attach（使用捕获的 domain，attach 自身不再重读 domain_get），并用 RAII guard 仅 detach 本次自己建立的 attachment。bridge crate 的 cache hydration 内部会重读 domain_get——post-gate 重读已被两次实机 A/B 实证无害，由 bridge_fake_happy fixture 固化。callback 侧 capability 不得隐式 attach/detach 任意线程。
 
 ## Callback-safe 原语
 

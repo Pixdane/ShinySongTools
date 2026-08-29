@@ -84,7 +84,7 @@ PlayTools AKPlugin
 - callback 不访问 App、AppWorld、PluginManager 或主线程 TLS；只使用所属 CallbackSiteContainer 的字段与注入的 `&CallbackCtx` 能力。callback 修改主线程状态只经跨域 route 提交，由下一次外层 LateUpdate 处理。
 - 跨域 route 的 mailbox 语义在注册时按类型选择：`latest`（覆盖）/ `bounded::<N>`（保序 FIFO）/ `shared_latest`（`Arc<T>` 单槽，承载有主结构化数据）。callback 侧 endpoint 操作要求 `&CallbackCtx`，main 侧要求 `&UpdateCtx<'_>`；`latest`/`bounded` 的 payload 满足 `CallbackPayload: Copy + Send + Sync + 'static`，`shared_latest` 的 `T: Send + Sync + 'static` 为无副作用 Drop 的普通数据。
 - 所有功能 callback 与 plugin debug route 必须同时通过 RuntimeGate 与所属 PluginGate；global failure 首先关闭 RuntimeGate（Release），之后观察到关闭的 callback 只调 typed original。
-- bootstrap readiness 阶梯中，跨过 image/exports gate 后 `il2cpp_domain_get` **恰好调用一次**；返回 null 即本次一次性 bootstrap 终止，不轮询重试（实验定案，见 runtime-crate 分册）。
+- bootstrap readiness 阶梯中，跨过 image/exports gate 后的 `il2cpp_domain_get` **探测恰好一次**；返回 null 即本次一次性 bootstrap 终止，不轮询重试（实验定案，见 runtime-crate 分册）。gate 之后的元数据查询链中，bridge crate 内部（cache hydration 等）会重读 domain_get——该重读已被两次实机 A/B 实证无害，且由无游戏 fixture（bridge_fake_happy）固化调用模式；本条约束的是探测不轮询，不是全进程调用次数。
 - `panic = "unwind"`；Rust panic 不跨 FFI。每个 boxed system 有 owner-scoped panic boundary；scheduler 热路径有 `SchedulerFrame`/`OriginalPhase` 三阶段守护，original 恰好调用一次。
 - Observability 在最外层启动保护中尽早建立：runtime-owned scoped `tracing::Dispatch` 覆盖所有受控执行根；callback/scheduler 热路径只提交固定大小 `CompactEvent` 到进程级队列，由独立 drain worker 输出。v1 只输出 Apple Unified Logging。
 - 配置唯一来源为 `DataRoot/scsp.toml`（typed `RuntimeConfig`）；缺失按默认值，解析失败 fail-closed（全默认值、debug 强制关闭）。`debug.enabled` 为真时注册 DebugPlugin（JSON-RPC 2.0 over UDS；dispatch 走"DebugPlugin → owner handler system → callback relay"，见 debug 分册），否则不注册、不建 socket。

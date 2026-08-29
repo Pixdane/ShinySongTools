@@ -3,7 +3,7 @@
 //! Ladder (docs/runtime-crate.md):
 //!   1. image identity — the ONLY pollable step (bounded deadline);
 //!   2. exports — single shot, fail closed;
-//!   3. `domain_get` — EXACTLY ONCE per process; null terminates the one-shot
+//!   3. `domain_get` — the probe runs EXACTLY ONCE (no polling); null terminates
 //!      bootstrap without retry (experiment-validated);
 //!   4. attach (RAII detach of this attachment only) + metadata hydration;
 //!   5. runtime/layout identity;
@@ -122,8 +122,11 @@ pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
         return bootstrap_failed(&gate, None);
     }
 
-    // Ladder 3 (exactly once): domain_get. Null terminates the one-shot
-    // bootstrap; polling this probe is forbidden (experiment-validated).
+    // Ladder 3: the domain probe runs exactly once; null terminates the
+    // one-shot bootstrap. Polling this probe is forbidden
+    // (experiment-validated). The bridge's cache hydration re-reads
+    // domain_get internally at ladder 4 — post-gate re-reads are empirically
+    // safe (two live A/B runs) and pinned by the bridge_fake_happy fixture.
     if let Err(err) = deps.api.domain_get() {
         tracing::error!(target: "bootstrap", error = %err, "ladder 3 failed (one-shot terminated)");
         return bootstrap_failed(&gate, None);

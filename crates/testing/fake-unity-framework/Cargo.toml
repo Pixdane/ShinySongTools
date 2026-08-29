@@ -1,0 +1,11 @@
+[package]
+name = "fake-unity-framework"
+description = "No-game test fixture: a cdylib exporting the complete il2cpp-bridge-rs 0.1.4 export set with controllable behavior (ported from the scsp-playcover-hook experiment of the same purpose)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]

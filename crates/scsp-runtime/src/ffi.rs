@@ -19,8 +19,6 @@ use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::observability;
-
 /// One-shot process startup marker.
 static STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -37,25 +35,30 @@ pub extern "C" fn scsp_start(documents_path: *const c_char) {
     // boundary.
     let result = std::panic::catch_unwind(|| entry(documents_path));
     if let Err(payload) = result {
-        // Nothing may panic here either; record a fixed message only.
-        tracing::error!(target: "scsp_start", "entry panicked; startup aborted");
+        // Nothing may panic here either. This recovery path runs outside any
+        // scoped dispatch (the scope guard was unwound away), so it reports
+        // through the compact queue, which works from any thread.
         drop(payload);
+        let _ = scsp_core::process_event_queue().try_emit(scsp_core::CompactEvent::new(
+            scsp_core::CompactEventCode(crate::observability::compact_codes::FFI_ENTRY_PANICKED),
+            scsp_core::CompactLevel::Error,
+        ));
     }
 }
 
 fn entry(documents_path: *const c_char) {
+    // Establish the process observability root + the scoped dispatch for
+    // this execution root as early as possible (docs: Observability is
+    // created inside the outermost startup guard, before argument parsing).
+    let _obs = crate::observability::scope();
+
     // Claim the one-shot marker before touching the arguments: the first
     // call consumes the process's single bootstrap attempt even if its
     // arguments turn out to be invalid.
     if STARTED.swap(true, Ordering::AcqRel) {
-        let _root = observability::root();
         tracing::warn!(target: "scsp_start", "duplicate start ignored");
         return;
     }
-
-    // Observability is established before argument parsing (root is kept
-    // alive to process exit by the static).
-    let _root = observability::root();
 
     // Validate and copy the path. The Swift-side pointer dies with this
     // call; only Rust-owned data leaves this function.
@@ -70,9 +73,12 @@ fn entry(documents_path: *const c_char) {
 
     // The one-shot bootstrap worker: readiness ladder, App build, scheduler
     // publication, and Handoff run here, independent of the caller's stack.
+    // The worker is its own execution root and establishes the scoped
+    // dispatch itself.
     let spawned = std::thread::Builder::new()
         .name("scsp-bootstrap".to_owned())
         .spawn(move || {
+            let _obs = crate::observability::scope();
             let data_root = scsp_core::DataRoot::new(owned);
             let deps = match crate::bootstrap::production_deps(&data_root) {
                 Some(deps) => deps,

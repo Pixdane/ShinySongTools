@@ -18,10 +18,22 @@
 
 use crate::app::App;
 use crate::handoff::{Handoff, HandoffTake};
+use crate::observability::{self, compact_codes};
 use scsp_core::{MainThreadToken, MethodPointerSlot, OriginalPhase, RuntimeGate, SlotMemory};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+
+/// Monotonic per-process frame sequence for compact events.
+static FRAME_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Hot-path-safe emission: the compact queue works on any thread, with or
+/// without a scoped dispatch, never blocks and never allocates.
+fn emit_compact(code: u16, level: scsp_core::CompactLevel, arg0: u64, arg1: u64) {
+    let _ = scsp_core::process_event_queue().try_emit(
+        scsp_core::CompactEvent::new(scsp_core::CompactEventCode(code), level).args(arg0, arg1),
+    );
+}
 
 /// Opaque IL2CPP object / method types for the scheduler ABI.
 #[repr(C)]
@@ -102,8 +114,14 @@ unsafe extern "C" fn scheduler_replacement(
     } else {
         // Construct invariant break: callback reachable without a published
         // context. Nothing safe to call (no captured original here); the
-        // observation is recorded and the frame ends.
-        tracing::error!(target: "scheduler", "scheduler callback reached without published context");
+        // observation goes through the compact queue because this is a hot
+        // callback path without a scoped dispatch. Never panics across FFI.
+        emit_compact(
+            observability::compact_codes::SCHED_NO_PUBLISHED_CONTEXT,
+            scsp_core::CompactLevel::Error,
+            0,
+            0,
+        );
         let _ = (this, method);
     }
 }
@@ -121,6 +139,17 @@ pub struct SchedulerContext {
 impl SchedulerContext {
     /// The replacement body: one full frame of the fixed callback order.
     pub fn run_frame(&self) {
+        // Scoped dispatch for this execution root (plugin systems inside use
+        // normal tracing macros; the hot emits below go through the compact
+        // queue regardless).
+        let _obs = crate::observability::scope();
+        let seq = FRAME_SEQ.fetch_add(1, Ordering::Relaxed);
+        emit_compact(
+            compact_codes::SCHED_FRAME_ENTERED,
+            scsp_core::CompactLevel::Info,
+            seq,
+            0,
+        );
         // The frame is built BEFORE the execution catch so the recovery path
         // below can inspect the phase and compensate the original exactly
         // once; the frame's Drop remains the bottom-line ownership guard.
@@ -132,7 +161,14 @@ impl SchedulerContext {
         };
 
         let outcome = catch_unwind(AssertUnwindSafe(|| frame.execute()));
+        let done_phase = frame.phase as u64;
         if outcome.is_ok() {
+            emit_compact(
+                compact_codes::SCHED_FRAME_DONE,
+                scsp_core::CompactLevel::Info,
+                seq,
+                done_phase,
+            );
             return;
         }
         // Panic inside the frame body: global failure, then recovery only
@@ -146,16 +182,28 @@ impl SchedulerContext {
             let _ = catch_unwind(AssertUnwindSafe(|| frame.call_original_once()));
         }
         drop(catch_unwind(AssertUnwindSafe(|| drop(frame))));
+        emit_compact(
+            compact_codes::SCHED_FRAME_DONE,
+            scsp_core::CompactLevel::Error,
+            seq,
+            done_phase,
+        );
     }
 
     /// Global failure publication order (fixed): gate close (Release) first,
     /// then `failed` (Release). Callbacks read `failed` with Acquire and can
     /// therefore never observe `failed == true` while the gate still reads
-    /// open.
+    /// open. Reported through the compact queue: this runs on hot callback
+    /// paths that have no scoped dispatch.
     pub fn publish_global_failure(&self) {
         self.runtime_gate.close();
         self.failed.store(true, Ordering::Release);
-        tracing::error!(target: "scheduler", "scheduler global failure published");
+        emit_compact(
+            observability::compact_codes::SCHED_GLOBAL_FAILURE,
+            scsp_core::CompactLevel::Error,
+            0,
+            0,
+        );
     }
 }
 
@@ -213,6 +261,12 @@ impl SchedulerFrame<'_> {
         //    global failure, mark TLS Unavailable (enter or keep), then
         //    passthrough only — no token, no plugin rollback.
         if !(self.context.main_thread_check)() {
+            emit_compact(
+                compact_codes::SCHED_THREAD_MISMATCH,
+                scsp_core::CompactLevel::Error,
+                0,
+                0,
+            );
             self.context.publish_global_failure();
             APP_SLOT.with(|slot| {
                 let mut slot = slot.borrow_mut();
@@ -303,12 +357,24 @@ impl SchedulerFrame<'_> {
             return;
         }
         self.phase = OriginalPhase::CallingOriginal;
+        emit_compact(
+            compact_codes::SCHED_ORIGINAL_CALLED,
+            scsp_core::CompactLevel::Info,
+            0,
+            0,
+        );
         // SAFETY: the original is the typed pointer captured from the slot
         // at bind time; the replacement passes `this`/`method` through. The
         // frame uses null stand-ins only where no game object is involved.
         unsafe {
             (self.context.hook.original)(core::ptr::null_mut(), core::ptr::null());
         }
+        emit_compact(
+            compact_codes::SCHED_ORIGINAL_RETURNED,
+            scsp_core::CompactLevel::Info,
+            0,
+            0,
+        );
         guard.end_call();
         self.phase = OriginalPhase::AfterOriginal;
     }

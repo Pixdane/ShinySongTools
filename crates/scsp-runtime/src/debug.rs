@@ -70,7 +70,12 @@ impl DebugTransport {
         let worker_transport = Arc::clone(&transport);
         std::thread::Builder::new()
             .name("scsp-debug-io".to_owned())
-            .spawn(move || io_worker(listener, worker_transport))?;
+            .spawn(move || {
+                // The I/O worker is a runtime-owned execution root: scoped
+                // dispatch so its tracing calls reach Unified Logging.
+                let _obs = crate::observability::scope();
+                io_worker(listener, worker_transport)
+            })?;
         Ok(transport)
     }
 

@@ -10,10 +10,12 @@
 //!
 //! Two experiment-validated constraints are upheld here:
 //!
-//! * `il2cpp_domain_get` is called **exactly once** per process, at ladder 3.
-//!   The bridge crate's `Thread::attach` helper would call it again
-//!   internally, so attach is driven through the raw `thread_*` exports with
-//!   the domain captured at ladder 3.
+//! * the ladder-3 `il2cpp_domain_get` **probe** runs exactly once (never
+//!   polled); attach is driven through the raw `thread_*` exports with the
+//!   domain captured at that probe, so attach adds no extra call. The
+//!   bridge crate's cache hydration still re-reads `domain_get` internally
+//!   at ladder 4 — post-gate re-reads are empirically safe (two live A/B
+//!   runs) and pinned by the `bridge_fake_happy` fixture.
 //! * Attachments are only ever detached by the RAII guard that created them.
 
 use crate::backend::{
@@ -256,8 +258,9 @@ impl Il2CppApi for BridgeBackend {
     }
 
     fn domain_get(&self) -> Result<DomainHandle, Il2CppError> {
-        // Ladder 3: exactly one call per process. Repeated calls return the
-        // captured value; a null result terminates the one-shot bootstrap.
+        // Ladder 3 probe: the bootstrap calls this exactly once; repeated
+        // calls return the captured value without touching IL2CPP. Null
+        // terminates the one-shot bootstrap.
         let captured = self.domain();
         if let Some(domain) = captured {
             return Ok(domain);

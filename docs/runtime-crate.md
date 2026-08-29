@@ -53,8 +53,9 @@ bootstrap worker
     唯一且身份匹配的 UnityFramework；取得并保活 exact handle
   → 阶梯 2（单次）：在该 exact handle 上一次性加载全部所需 IL2CPP exports；
     缺失即失败，不回退 RTLD_DEFAULT
-  → 阶梯 3（恰好一次）：调用 il2cpp_domain_get()；
-    返回 null 即本次一次性 bootstrap 终止——不轮询、不重试（实验定案）
+  → 阶梯 3（探测恰好一次）：调用 il2cpp_domain_get()；
+    返回 null 即本次一次性 bootstrap 终止——不轮询、不重试（实验定案；
+    阶梯 4 的 cache hydration 内部会重读一次 domain，实证无害，见 core-crate 分册）
   → 阶梯 4（单次）：worker attach 到该 domain（RAII detach guard，只 detach 本次建立的
     attachment）；等待/执行 scheduler 所需 assembly/image/metadata 解析与目标校验
   → 阶梯 5：校验 runtime/layout 身份属于生产实现明确支持的集合

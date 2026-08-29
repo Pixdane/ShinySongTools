@@ -15,3 +15,15 @@ Including PlayTools as a submodule does not replace or relax either project's
 license obligations. Any future distributed work that incorporates or modifies
 PlayTools code must preserve the upstream notices and provide the corresponding
 source and modification information required by the AGPLv3.
+
+## il2cpp-bridge-rs
+
+The Rust runtime depends on [Batchhh/il2cpp-bridge-rs](https://github.com/Batchhh/il2cpp-bridge-rs),
+pinned to version 0.1.4 (`=0.1.4` in the workspace manifest), as the IL2CPP
+API table and metadata query layer.
+
+il2cpp-bridge-rs is licensed under the MIT license. Its exact version,
+upstream repository, and license are recorded here because the runtime pins
+the dependency and its behavior (export set, cache initialization, internal
+domain reads) is part of the validated evidence chain described in
+`docs/`.
