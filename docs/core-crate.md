@@ -1,10 +1,10 @@
 # Core crate 设计
 
-状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `scsp-core`：平台基础 API、线程/域能力、callback-safe 原语和底层安全封装。它不了解 App、PluginManager、具体功能插件或 runtime bootstrap 流程。
+状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `core`：平台基础 API、线程/域能力、callback-safe 原语和底层安全封装。它不了解 App、PluginManager、具体功能插件或 runtime bootstrap 流程。
 
 ## 依赖边界
 
-`scsp-core` 位于依赖图底部，被 `scsp-plugin-api` 与 `scsp-runtime` 依赖。实现优先组合已审阅的 crate，而不是重新实现通用容器或 facade：
+`core` 位于依赖图底部，被 `plugins` 与 `runtime` 依赖。实现优先组合已审阅的 crate，而不是重新实现通用容器或 facade：
 
 - `thiserror` 派生公开 typed error。
 - `il2cpp-bridge-rs`（0.1.4 固定）提供实验验证过的 IL2CPP API table 与 metadata 查询基础。

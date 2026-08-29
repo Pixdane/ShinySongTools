@@ -1,6 +1,6 @@
 # Runtime：bootstrap 与 scheduler
 
-状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `scsp-runtime` 的 FFI 入口、bootstrap worker、readiness 阶梯、Unity 主线程 scheduler、Handoff、TLS 与 runtime 级失败边界。App / PluginManager / driver 见 [Runtime：App 与 driver](plugin-system.md)。
+状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `runtime` 的 FFI 入口、bootstrap worker、readiness 阶梯、Unity 主线程 scheduler、Handoff、TLS 与 runtime 级失败边界。App / PluginManager / driver 见 [Runtime：App 与 driver](plugin-system.md)。
 
 ## 依赖与职责
 

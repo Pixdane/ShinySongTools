@@ -3,7 +3,7 @@
 状态：v2 设计（2026-08-29 修订）。
 
 - Observability（Logging + Diagnostics）：v1 薄层设计沿用，未改动语义。
-- Debug：改为 **DebugPlugin**（`scsp-runtime` 内置、feature 门控的普通插件）+ **JSON-RPC 2.0** over UDS；定位为**插件开发调试工具**（含运行时自省 topic），不是终端用户控制面板。v1 交付 main 与 callback 两个执行域。
+- Debug：改为 **DebugPlugin**（`runtime` 内置、feature 门控的普通插件）+ **JSON-RPC 2.0** over UDS；定位为**插件开发调试工具**（含运行时自省 topic），不是终端用户控制面板。v1 交付 main 与 callback 两个执行域。
 
 本文记录两个横跨各 crate 的系统：基于 `tracing` 的 Observability，以及可选的 Debug Control Plane。
 
@@ -62,7 +62,7 @@ Observability queue 与业务 route 可复用同一底层 bounded queue crate，
 
 ## Debug：定位与生命周期
 
-- DebugPlugin 是 `scsp-runtime` 内的普通插件（feature `debug` 编译），使用公开 Plugin API + 同 crate 内部的 transport 设施；不再有 `AppCore::DebugState` 特例或内建 driver 阶段。
+- DebugPlugin 是 `runtime` 内的普通插件（feature `debug` 编译），使用公开 Plugin API + 同 crate 内部的 transport 设施；不再有 `AppCore::DebugState` 特例或内建 driver 阶段。
 - 唯一启用配置为 `scsp.toml` 的 `debug.enabled`（默认 `false`）。为 `true` 时 runtime 把 DebugPlugin 注册在生产插件列表**首位**；为 `false` 时不注册、不建 socket、无任何运行时成本。
 - DebugPlugin 的 build 在 worker 阶段创建 UDS listener 与 I/O worker（AnyThread 阶段允许），启动失败只使 Debug 不可用（I/O worker 记录 observability、后续 request 回 `runtime_unavailable`），不影响其它插件与游戏。transport 生命周期到进程退出为止：没有运行期停止协议；客户端感知的"服务消失"只有进程退出（连接关闭）。socket 残留由下次启动 build 时 unlink 前置清理。
 - 所有 debug route 的有效条件包含 RuntimeGate 与 owner PluginGate。总 gate 关闭后不再向任何 handler 投递新 request；已 pending 的统一回复 `runtime_unavailable`。owner 退役后其 topics 的 request 回复 `plugin_unavailable`。

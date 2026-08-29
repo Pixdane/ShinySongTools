@@ -1,4 +1,4 @@
-//! No-game fake UnityFramework for `scsp-core`'s bridge adapter fixtures.
+//! No-game fake UnityFramework for `core`'s bridge adapter fixtures.
 //!
 //! Ported from the scsp-playcover-hook experiment `il2cpp-bridge-rs-usage`
 //! (fake-runtime crate) and extended for the production bootstrap: a second

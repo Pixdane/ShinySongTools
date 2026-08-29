@@ -1,0 +1,18 @@
+[package]
+name = "core"
+description = "Platform primitives for the Shiny Song Tools runtime: thread capabilities, gates, method-pointer slots, callback-safe containers, compact events, and the plugin error chain."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "corelib"
+
+[dependencies]
+crossbeam-queue = { workspace = true }
+crossbeam-utils = { workspace = true }
+il2cpp-bridge-rs = { workspace = true }
+libc = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

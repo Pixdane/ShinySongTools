@@ -1,13 +1,13 @@
 # Plugin API 设计
 
-状态：v2 设计（2026-08-29 修订）。本文定义功能插件作者可见的公共 API，概念 crate 名为 `scsp-plugin-api`。它依赖 `scsp-core`，不暴露 PluginManager、driver、Handoff、ledger 或 runtime bootstrap 内部实现。
+状态：v2 设计（2026-08-29 修订）。本文定义功能插件作者可见的公共 API，概念 crate 名为 `plugins`。它依赖 `core`，不暴露 PluginManager、driver、Handoff、ledger 或 runtime bootstrap 内部实现。
 
 ## 定位与信任边界
 
 插件平台为个人使用设计：插件与 runtime 同仓库编译，插件作者即审阅者。因此：
 
 - hook 目标（ABI wrapper）由插件作者自定义，不经 runtime 统一注册；每个新 target 的 ABI 与校验谓词由作者审阅并对后果负责。
-- `scsp-plugin-api` 不承诺 semver 稳定；API 演进以同仓库内所有插件同步修改为准。
+- `plugins` 不承诺 semver 稳定；API 演进以同仓库内所有插件同步修改为准。
 - 这不放松安全边界：插件不能绕过 facade 取得 `World`、slot 写权限或未登记的外部 effect，这些由类型与可见性强制。
 
 插件采用 Bevy-style 的 App 配置模型，复用 `bevy_ecs` 的 resource、SystemParam 与 System；不引入 entity/component gameplay model、`bevy_app::App` 或 Bevy runner：
@@ -196,27 +196,26 @@ ctx.register_callback_debug::<FpsProbe>()?;
 - 一个 topic 一个 owner、一个 handler、一个执行域；重名注册使当前插件 build 失败。
 - dispatch 流、pending/correlation、错误映射与运行时自省 topic 见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)。
 
-## 功能模式示例：FPS 解锁（v1 测试插件）
+## 功能模式示例：FPS 解锁（`fps` crate）
 
 ```text
-FpsPlugin
+`fps::FpsPlugin`
   build（worker 线程）
-    → 读 config：[fps] mode/target
-    → 定义 targets：QualitySettings::set_targetFrameRate / set_vSyncCount（作者自定义 HookTarget）
+    → 读 config：[fps] enabled/target
+    → 定义 targets：UnityEngine.CoreModule.dll::Application::set_targetFrameRate / QualitySettings::set_vSyncCount
     → 注册 route：main→callback latest<FpsSetting>
     → 注册 container：FpsSites { setting: rx }
     → hook 两个 target（typestate 发布→安装，gate 关闭）
     → 注册 main 域 debug topic：fps.get / fps.set（socket 调参测试）
   startup（首个 LateUpdate，主线程）
-    → 用 MainThreadToken 调 il2cpp API 设置初始值（来自 config）
-    → 插入 FpsState resource
+    → 插入 FpsState resource（setter callback 读取 target）
   setter replacement（游戏调用 setter 时触发）
     → 读容器中 latest<FpsSetting>：unlock 则覆盖入参调 original，locked 则透传原值
   debug handler（Update system）
     → fps.set：更新 FpsState + MainWriter 写入 latest<FpsSetting>，下一帧 setter 生效
 ```
 
-该插件覆盖全部机制（target 定义、container、route、hook typestate、startup、debug topic），且 metadata 依赖为零。翻译、相机、贴图等后续插件按同一 API 立项；翻译复用 SCSPTranslationData 社区格式（只读快照放容器字段，热重载协议届时另设计）。
+该插件覆盖全部机制（target 定义、container、route、hook typestate、debug topic），且只依赖 `plugins` API 与 `core` primitives。当前仅完成无游戏验证；真实游戏启动、patch、attach 与 FPS 生效测试需绑定 candidate SHA 另行批准。翻译、相机、贴图等后续插件按同一 API 立项；翻译复用 SCSPTranslationData 社区格式（只读快照放容器字段，热重载协议届时另设计）。
 
 ## API 待打磨项
 

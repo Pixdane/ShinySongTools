@@ -1,6 +1,6 @@
 # Runtime：App 与 driver
 
-状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `scsp-runtime` 的 App / PluginManager / driver 部分：组合根、owner scope、固定 driver、惰性初始化与局部回滚。bootstrap worker、scheduler、Handoff 与 `scsp_start` 见 [Runtime：bootstrap 与 scheduler](runtime-crate.md)。
+状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `runtime` 的 App / PluginManager / driver 部分：组合根、owner scope、固定 driver、惰性初始化与局部回滚。bootstrap worker、scheduler、Handoff 与 `scsp_start` 见 [Runtime：bootstrap 与 scheduler](runtime-crate.md)。
 
 ## App 是组合根
 

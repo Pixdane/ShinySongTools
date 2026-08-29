@@ -1,9 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/scsp-core",
-    "crates/scsp-plugin-api",
-    "crates/scsp-runtime",
+    "crates/core",
+    "crates/plugins",
+    "crates/fps",
+    "crates/runtime",
     "crates/testing/fake-unity-framework",
 ]
 
@@ -14,8 +15,9 @@ license = "MIT"
 repository = "https://github.com/Pixdane/ShinySongTools"
 
 [workspace.dependencies]
-scsp-core = { path = "crates/scsp-core" }
-scsp-plugin-api = { path = "crates/scsp-plugin-api" }
+corelib = { package = "core", path = "crates/core" }
+plugins = { path = "crates/plugins" }
+fps = { path = "crates/fps" }
 
 bevy_ecs = { version = "0.19.1", default-features = false, features = ["std"] }
 il2cpp-bridge-rs = "=0.1.4"

@@ -91,7 +91,7 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
         "--target-dir",
         options.cargo_target_dir,
         "-p",
-        "scsp-runtime",
+        "runtime",
         "--features",
         options.cargo_features,
     });

@@ -1,0 +1,37 @@
+error[E0277]: `Rc<()>` cannot be shared between threads safely
+  --> tests/ui/main_thread_token_not_send.rs:7:24
+   |
+ 7 |       std::thread::spawn(move || {
+   |  _____------------------_^
+   | |     |
+   | |     required by a bound introduced by this call
+...  |
+12 | |         core::mem::forget(token);
+13 | |     });
+   | |_____^ `Rc<()>` cannot be shared between threads safely
+   |
+   = help: within `MainThreadToken`, the trait `Sync` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `MainThreadToken`
+  --> $WORKSPACE/crates/core/src/main_thread.rs
+   |
+   | pub struct MainThreadToken {
+   |            ^^^^^^^^^^^^^^^
+   = note: required for `&MainThreadToken` to implement `Send`
+note: required because it's used within this closure
+  --> tests/ui/main_thread_token_not_send.rs:7:24
+   |
+ 7 |     std::thread::spawn(move || {
+   |                        ^^^^^^^
+note: required by a bound in `spawn`
+  --> $RUST/std/src/thread/functions.rs
+   |
+   | pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+   |        ----- required by a bound in this function
+...
+   |     F: Send + 'static,
+   |        ^^^^ required by this bound in `spawn`

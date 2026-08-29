@@ -81,17 +81,17 @@
 
 ```text
 crates/
-  scsp-core         平台基础：MainThreadToken、gates、MethodPointerSlot、MethodRef、
+  core         平台基础：MainThreadToken、gates、MethodPointerSlot、MethodRef、
                     Il2CppBackend 句柄、callback-safe 原语（mailbox/原子）、CompactEvent
-  scsp-plugin-api   插件可见的一切：Plugin trait、AppCtx facade、phase context、
+  plugins   插件可见的一切：Plugin trait、AppCtx facade、phase context、
                     route/endpoint、hook typestate API、错误类型（无实现依赖）
-  scsp-runtime      App、PluginManager、固定 driver、bootstrap worker、scheduler、
+  runtime      App、PluginManager、固定 driver、bootstrap worker、scheduler、
                     scsp_start FFI、Observability 装配、内置 debug 插件（可选 feature）
-plugins/           功能插件（编译期固定列表，只依赖 scsp-plugin-api）
+plugins/           功能插件（编译期固定列表，只依赖 plugins）
 swift/  patches/   carrier 与构建侧（bundle-build.md / swift-entry.md 不变）
 ```
 
-变更：**plugin-system 并入 scsp-runtime**。plugin-system 与 runtime 都是 runtime 侧内部物，没有"只想要 plugin-system 不要 bootstrap"的第二消费者；少一条 crate 边界就少一类 C5 式漂移。插件依旧只依赖 `scsp-plugin-api`，隔离目标不变。
+变更：**plugin-system 并入 runtime**。plugin-system 与 runtime 都是 runtime 侧内部物，没有"只想要 plugin-system 不要 bootstrap"的第二消费者；少一条 crate 边界就少一类 C5 式漂移。插件依旧只依赖 `plugins`，隔离目标不变。
 
 ### 2.2 Core：capability 与原语
 
@@ -217,7 +217,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 
 ### 2.7 Debug 降级为插件 + JSON-RPC
 
-- v1 交付物：`scsp-runtime` 内置（feature 门控）一个用**公开 API** 写的 `DebugPlugin`：`Plugin::build` 里注册 UDS transport（runtime 提供窄 handle）、`DebugTopic` trait（保留现设计：`NAME/VERSION/Request/Response`）、main-domain handler 注册为自身 Update system。
+- v1 交付物：`runtime` 内置（feature 门控）一个用**公开 API** 写的 `DebugPlugin`：`Plugin::build` 里注册 UDS transport（runtime 提供窄 handle）、`DebugTopic` trait（保留现设计：`NAME/VERSION/Request/Response`）、main-domain handler 注册为自身 Update system。
 - wire 用 **JSON-RPC 2.0 over length-prefixed UDS**（W1）：`method = topic name`，`params = request payload`，`result/error` 直接映射 topic response / `PluginError` 映射；`id` 关联保留。删除自造 envelope、9 错误码词汇表、`ok` 字段等一整页定义（A1 的三套错误词汇随之收敛为 `PluginError` 一套 + JSON-RPC 标准码）。
 - 删除项：callback-domain debug（等第一个真实需求）、topic 多版本、双执行域 pending 状态机、`AppCore::DebugState` 生命周期特例。`debug.enabled` 来自 `scsp.toml`（F3 修正）。插件退役 → 它的 update system 停跑 + route 随 owner ledger 关闭，无需专有规则。
 
@@ -270,7 +270,7 @@ pub enum RestoreError { OwnershipLost, Failed }   // 继承现设计语义
 | MethodPointerSlot / MethodRef / `Il2CppBackend` 句柄 / attach-detach RAII | 原样继承 |
 | Observability（tracing scoped Dispatch + CompactEvent + drain worker） | 原样继承，定义集中到一篇 |
 | App / AppWorld / 固定 driver / owner ledger / restore action / 局部回滚 | 继承语义；**Startup staging 改为直接插入 + ledger 移除**（F2/O2），惰性 initialize |
-| 双 crate（plugin-system / runtime） | 合并为 scsp-runtime |
+| 双 crate（plugin-system / runtime） | 合并为 runtime |
 | `Frozen<T>` | 删除（O3） |
 | 四个 message facade + latest-value 唯一语义 | 收敛为方向 branded `Endpoint<P, D, M>`，`Latest`/`Bounded<N>` 双语义（O4/A4） |
 | `InRef`/`InMut` 输入 tuple | 换成 SCSP phase context（A3） |
