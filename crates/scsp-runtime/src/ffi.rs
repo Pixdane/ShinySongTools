@@ -102,6 +102,17 @@ fn entry(documents_path: *const c_char) {
             };
             let deps =
                 crate::bootstrap::production_deps(handle, &data_root, config);
+
+            #[cfg(feature = "bootstrap-timing-probe")]
+            {
+                if crate::bootstrap::run_bootstrap_timing_probe(deps) {
+                    tracing::info!(target: "scsp_start", "bootstrap timing probe completed");
+                } else {
+                    tracing::error!(target: "scsp_start", "bootstrap timing probe terminated");
+                }
+            }
+
+            #[cfg(not(feature = "bootstrap-timing-probe"))]
             if crate::bootstrap::run_bootstrap(deps) {
                 tracing::info!(target: "scsp_start", "bootstrap published the App");
             } else {

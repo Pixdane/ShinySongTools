@@ -47,6 +47,12 @@ pub const SCHEDULER_TARGET: TargetId = TargetId {
 pub const IMAGE_POLL_DEADLINE: Duration = Duration::from_secs(120);
 pub const IMAGE_POLL_BACKOFF: Duration = Duration::from_millis(250);
 
+/// Diagnostic-only delay between export loading and the single dangerous
+/// `il2cpp_domain_get` call. This is an experiment parameter, not a
+/// production readiness contract.
+#[cfg(feature = "bootstrap-timing-probe")]
+pub const TIMING_PROBE_DELAY: Duration = Duration::from_secs(5);
+
 /// Deps injected for testability; the production worker builds them from the
 /// real backend after ladder 1 acquired the exact handle.
 pub struct BootstrapDeps {
@@ -115,6 +121,59 @@ pub fn production_deps(
         data_root: data_root.clone(),
         config,
         thread_check: crate::scheduler::pthread_main_check(),
+    }
+}
+
+/// Diagnostic-only startup timing probe.
+///
+/// The probe changes one variable from the failed production attempt: after
+/// the exact image and export table are available, it waits for a fixed,
+/// bounded interval before calling `domain_get` exactly once. It deliberately
+/// stops there: no thread attach, metadata hydration, target resolution,
+/// MethodPointer access, App construction, or hook installation occurs.
+///
+/// A successful live run would confirm the initialization-race hypothesis;
+/// it would not make a fixed delay a production readiness mechanism.
+#[cfg(feature = "bootstrap-timing-probe")]
+pub fn run_bootstrap_timing_probe(deps: BootstrapDeps) -> bool {
+    run_bootstrap_timing_probe_with_delay(deps, TIMING_PROBE_DELAY)
+}
+
+/// Test seam for the diagnostic probe; production always uses
+/// [`TIMING_PROBE_DELAY`].
+#[cfg(feature = "bootstrap-timing-probe")]
+pub fn run_bootstrap_timing_probe_with_delay(deps: BootstrapDeps, delay: Duration) -> bool {
+    match deps.api.unity_framework_image() {
+        Ok(image) => {
+            tracing::info!(target: "bootstrap_probe", image = %image.name, "image identity verified");
+        }
+        Err(err) => {
+            tracing::error!(target: "bootstrap_probe", error = %err, "image identity failed; probe terminated");
+            return false;
+        }
+    }
+
+    if let Err(err) = deps.api.load_exports() {
+        tracing::error!(target: "bootstrap_probe", error = %err, "export loading failed; probe terminated");
+        return false;
+    }
+
+    tracing::info!(
+        target: "bootstrap_probe",
+        delay_ms = delay.as_millis() as u64,
+        "timing probe armed; waiting before the single domain_get call"
+    );
+    std::thread::sleep(delay);
+
+    match deps.api.domain_get() {
+        Ok(_) => {
+            tracing::info!(target: "bootstrap_probe", "domain_get returned non-null; timing probe complete");
+            true
+        }
+        Err(err) => {
+            tracing::error!(target: "bootstrap_probe", error = %err, "domain_get failed; timing probe complete");
+            false
+        }
     }
 }
 

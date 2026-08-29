@@ -3,7 +3,54 @@
 {:paths ["tools"]
 
  :tasks
- {bundle
+ {bootstrap-probe
+  {:doc "Bootstrap timing probe。用法: bb bootstrap-probe build|status|patch --expected-executable-sha <sha>"
+   :requires ([cheshire.core :as json]
+              [bundle-ops :as bo])
+   :task
+   (let [[command & args] *command-line-args*
+         probe-ctx (fn []
+                     (assoc (bo/game-ctx!)
+                            :candidate-bundle "build/experiments/bootstrap-timing-probe/AKInterface.bundle"
+                            :candidate-manifest "build/experiments/bootstrap-timing-probe/AKInterface.bundle.manifest.json"))]
+     (case command
+       "build"
+       (do
+         (apply shell "zig build bootstrap-timing-probe" args)
+         (let [manifest (json/parse-string
+                         (slurp "build/experiments/bootstrap-timing-probe/AKInterface.bundle.manifest.json"))]
+           (println)
+           (println "Bootstrap timing probe built successfully")
+           (println)
+           (println (clojure.core/format "%-17s %s" "Artifact" "build/experiments/bootstrap-timing-probe/AKInterface.bundle"))
+           (println (clojure.core/format "%-17s %s" "Executable SHA" (get-in manifest ["bundle" "executable_sha256"])))
+           (println (clojure.core/format "%-17s %s" "Signature" "ad-hoc, verified"))))
+
+       "status"
+       (doseq [line (bo/status-lines (bo/status (probe-ctx)))]
+         (println line))
+
+       "patch"
+       (let [opts (into {}
+                        (map (fn [[k v]] [k v]))
+                        (partition 2 args))
+             result (bo/patch! (probe-ctx)
+                               {:expected-executable-sha
+                                (get opts "--expected-executable-sha")
+                                :expected-installed-executable-sha
+                                (get opts "--expected-installed-executable-sha")})]
+         (println)
+         (println (if (:idempotent result)
+                    "Probe bundle already installed (idempotent)"
+                    "Probe bundle patched successfully"))
+         (println)
+         (println (clojure.core/format "%-17s %s" "Installed exec" (:executable-sha result))))
+
+       (throw
+        (ex-info "用法: bb bootstrap-probe build|status|patch --expected-executable-sha <sha>"
+                 {:args *command-line-args*}))))}
+
+  bundle
   {:doc "Bundle 操作。用法: bb bundle build|status|patch|restore|selftest"
    :requires ([cheshire.core :as json]
               [bundle-ops :as bo])

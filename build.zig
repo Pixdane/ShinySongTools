@@ -14,19 +14,60 @@ const std = @import("std");
 /// Graph conventions: sources enter via `b.path` / `addFileArg` /
 /// `addDirectoryArg`; generated files leave via `addOutputFileArg` /
 /// `addOutputDirectoryArg`; LazyPaths are passed directly between steps;
-/// `dependsOn` only expresses ordering. Only the publish step writes
-/// `build/AKInterface.bundle`.
+/// `dependsOn` only expresses ordering. Only each pipeline's publish step
+/// writes its configured candidate root.
 pub fn build(b: *std.Build) void {
-    const bundle_step = b.step("bundle", "Build, sign, verify and publish AKInterface.bundle");
-
     // Build helpers, compiled for the host and run by the graph.
-    const patch_tool = hostTool(b, "patch-apply", "tools/zig/patch_apply.zig");
-    const assemble_tool = hostTool(b, "assemble-bundle", "tools/zig/assemble_bundle.zig");
-    const manifest_tool = hostTool(b, "bundle-manifest", "tools/zig/bundle_manifest.zig");
-    const publish_tool = hostTool(b, "bundle-publish", "tools/zig/bundle_publish.zig");
+    const tools = BundleTools{
+        .patch = hostTool(b, "patch-apply", "tools/zig/patch_apply.zig"),
+        .assemble = hostTool(b, "assemble-bundle", "tools/zig/assemble_bundle.zig"),
+        .manifest = hostTool(b, "bundle-manifest", "tools/zig/bundle_manifest.zig"),
+        .publish = hostTool(b, "bundle-publish", "tools/zig/bundle_publish.zig"),
+    };
+
+    addBundlePipeline(b, tools, .{
+        .step_name = "bundle",
+        .description = "Build, sign, verify and publish AKInterface.bundle",
+        .cargo_features = "debug",
+        .cargo_target_dir = "build/target",
+        .staticlib_path = "build/target/aarch64-apple-darwin/release/libshiny_song_tools.a",
+        .publish_root = "build",
+    });
+
+    // Diagnostic-only build. Its feature replaces the production bootstrap
+    // body with one delayed domain_get probe and publishes under the
+    // experiment output root, never over the normal candidate.
+    addBundlePipeline(b, tools, .{
+        .step_name = "bootstrap-timing-probe",
+        .description = "Build the diagnostic delayed-domain_get bundle",
+        .cargo_features = "bootstrap-timing-probe",
+        .cargo_target_dir = "build/experiments/bootstrap-timing-probe/target",
+        .staticlib_path = "build/experiments/bootstrap-timing-probe/target/aarch64-apple-darwin/release/libshiny_song_tools.a",
+        .publish_root = "build/experiments/bootstrap-timing-probe",
+    });
+}
+
+const BundleTools = struct {
+    patch: *std.Build.Step.Compile,
+    assemble: *std.Build.Step.Compile,
+    manifest: *std.Build.Step.Compile,
+    publish: *std.Build.Step.Compile,
+};
+
+const BundleOptions = struct {
+    step_name: []const u8,
+    description: []const u8,
+    cargo_features: []const u8,
+    cargo_target_dir: []const u8,
+    staticlib_path: []const u8,
+    publish_root: []const u8,
+};
+
+fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) void {
+    const bundle_step = b.step(options.step_name, options.description);
 
     // 1. Generate the patched Swift bundle source.
-    const patch_run = b.addRunArtifact(patch_tool);
+    const patch_run = b.addRunArtifact(tools.patch);
     patch_run.addArgs(&.{"--input"});
     patch_run.addFileArg(b.path("third_party/PlayTools/AKPlugin.swift"));
     patch_run.addArgs(&.{"--patch"});
@@ -38,16 +79,23 @@ pub fn build(b: *std.Build) void {
     //    state; this command executes on every entry into the graph. The
     //    staticlib path is declared as a file input of the link step so the
     //    link output is invalidated when the staticlib content changes.
-    //    The `debug` feature ships the DebugPlugin capability in the bundle
-    //    (v1 deliverable, docs/runtime-architecture.md): whether the debug
-    //    plane actually starts stays runtime-config-gated
-    //    (`debug.enabled`, fail-closed), so a disabled config behaves
-    //    identically to a build without the feature.
+    //    Features are pipeline-specific: the normal candidate ships the
+    //    runtime-config-gated DebugPlugin capability, while the diagnostic
+    //    candidate replaces bootstrap with the bounded timing probe.
     const cargo_run = b.addSystemCommand(&.{
-        "cargo",      "build", "--release", "--target", "aarch64-apple-darwin",
-        "--features", "debug",
+        "cargo",
+        "build",
+        "--release",
+        "--target",
+        "aarch64-apple-darwin",
+        "--target-dir",
+        options.cargo_target_dir,
+        "-p",
+        "scsp-runtime",
+        "--features",
+        options.cargo_features,
     });
-    const staticlib = b.path("build/target/aarch64-apple-darwin/release/libshiny_song_tools.a");
+    const staticlib = b.path(options.staticlib_path);
 
     // 3. Link the bundle executable. The devshell exports DEVELOPER_DIR /
     //    SDKROOT pointing at a Nix Apple SDK that the host Apple Swift
@@ -76,7 +124,7 @@ pub fn build(b: *std.Build) void {
     const bundle_exe = link_run.addOutputFileArg("AKInterface");
 
     // 4. Assemble the unsigned bundle.
-    const assemble_run = b.addRunArtifact(assemble_tool);
+    const assemble_run = b.addRunArtifact(tools.assemble);
     assemble_run.addArgs(&.{"--exe"});
     assemble_run.addFileArg(bundle_exe);
     assemble_run.addArgs(&.{"--plist"});
@@ -108,7 +156,7 @@ pub fn build(b: *std.Build) void {
     const zig_version = captureVersion(b, &.{ "zig", "version" });
     const sdk_version = captureHostSdkVersion(b);
 
-    const manifest_run = b.addRunArtifact(manifest_tool);
+    const manifest_run = b.addRunArtifact(tools.manifest);
     manifest_run.addArgs(&.{"--bundle"});
     manifest_run.addDirectoryArg(signed_bundle);
     manifest_run.addArgs(&.{"--out"});
@@ -127,13 +175,14 @@ pub fn build(b: *std.Build) void {
     manifest_run.addFileArg(sdk_version);
     manifest_run.step.dependOn(&verify_run.step);
 
-    // 7. Publish: bundle first, sidecar last, both atomically into build/.
-    const publish_run = b.addRunArtifact(publish_tool);
+    // 7. Publish: bundle first, sidecar last, both atomically into the
+    //    pipeline's candidate root.
+    const publish_run = b.addRunArtifact(tools.publish);
     publish_run.addArgs(&.{"--bundle"});
     publish_run.addDirectoryArg(signed_bundle);
     publish_run.addArgs(&.{"--manifest"});
     publish_run.addFileArg(manifest_file);
-    publish_run.addArgs(&.{ "--out-root", b.pathFromRoot("build") });
+    publish_run.addArgs(&.{ "--out-root", b.pathFromRoot(options.publish_root) });
     publish_run.step.dependOn(&verify_run.step);
 
     bundle_step.dependOn(&manifest_run.step);

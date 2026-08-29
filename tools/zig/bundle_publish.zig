@@ -62,8 +62,11 @@ pub fn main(init: std.process.Init) !void {
     const old_bundle = try std.fmt.allocPrint(arena, "{s}.old", .{final_bundle});
     const stage_manifest = try std.fmt.allocPrint(arena, "{s}.stage", .{final_manifest});
 
-    // 0. Open the output root (a directory handle so cleanup and renames
-    //    operate on build/-relative names).
+    // 0. Create and open the output root (a directory handle so cleanup and
+    //    renames operate on output-root-relative names). Experiment pipelines
+    //    publish below build/experiments/ and may be the first writer there.
+    cwd.createDirPath(io, root_path) catch |err|
+        die("cannot create output root {s}: {t}", .{ root_path, err });
     out_dir = std.Io.Dir.cwd().openDir(io, root_path, .{}) catch |err|
         die("cannot open output root {s}: {t}", .{ root_path, err });
     defer out_dir.close(io);
@@ -83,13 +86,15 @@ pub fn main(init: std.process.Init) !void {
 
     // 3. Bundle first: move the old one aside, rename stage into place.
     //    The move-aside is tolerant of "no previous publish" (any rename
-    //    failure here is re-detected below as a target-exists error, which
-    //    still fails the publish loudly instead of overwriting in place).
+    //    absence is expected; every other error fails loudly).
     var old_moved = false;
     if (cwd.rename(final_bundle, out_dir, old_bundle, io)) |_| {
         old_moved = true;
     } else |err| {
-        die("cannot move aside the previous bundle: {t}", .{err});
+        switch (err) {
+            error.FileNotFound => {},
+            else => die("cannot move aside the previous bundle: {t}", .{err}),
+        }
     }
     cwd.rename(stage_bundle, out_dir, final_bundle, io) catch |err|
         die("cannot publish the staged bundle: {t}", .{err});
@@ -111,7 +116,6 @@ pub fn main(init: std.process.Init) !void {
         out_dir.deleteTree(io, std.fs.path.basename(old_bundle)) catch |err|
             die("cannot remove the old bundle copy: {t}", .{err});
     }
-
 
     std.debug.print("bundle-publish: {s} + {s}\n", .{ final_bundle, final_manifest });
 }

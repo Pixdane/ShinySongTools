@@ -29,3 +29,4 @@ trybuild = { workspace = true }
 [features]
 default = []
 debug = []
+bootstrap-timing-probe = []

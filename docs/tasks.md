@@ -279,6 +279,26 @@ bb bundle patch \
 
 以上 status/patch/restore 与事务逻辑已实现于 `tools/bundle_ops.clj`（fingerprint 采用 BundleFingerprintV1 的结构化条目比较；`.stage-*`/`.old-*` 同卷原子换入；drifted/interrupted 一律拒绝）。`bb bundle selftest` 在 `build/tmp/` 的沙箱 `.app` 上全生命周期演练这套事务（unmanaged → patch 拒绝路径 → patch → patched → 幂等 → drift 拒绝 → restore → clean → interrupted 拒绝），不接触真实游戏；真实 patch/restore 仍需上述批准。
 
+## `bootstrap-probe`
+
+启动时序诊断探针的构建与 candidate 选择入口：
+
+```sh
+bb bootstrap-probe build
+bb bootstrap-probe status
+bb bootstrap-probe patch --expected-executable-sha <sha256>
+```
+
+`build` 委托 `zig build bootstrap-timing-probe`，把签名 bundle 与 sidecar
+发布到 `build/experiments/bootstrap-timing-probe/`，不会覆盖正式 candidate。
+`status` 只读检查同一游戏状态，但以该 experiment bundle 作为 candidate。
+`patch` 复用正式的 fingerprint、签名、精确 SHA、游戏停止、clean state 与事务
+回滚门；它仍是实际游戏修改，必须在每次 live 批次中针对精确 SHA 明确批准。
+
+探针语义与 live 停止条件见
+[`experiments/bootstrap-timing-probe/README.md`](../experiments/bootstrap-timing-probe/README.md)。
+固定延迟只用于验证初始化时序假设，不属于生产 readiness 合约。
+
 ## `debug`
 
 调用运行时 debug socket（JSON-RPC 2.0 over Unix domain socket，协议见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)）：
