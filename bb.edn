@@ -4,17 +4,16 @@
 
  :tasks
  {bundle
-  {:doc "Bundle 操作。用法: bb bundle build"
-   :requires ([cheshire.core :as json])
+  {:doc "Bundle 操作。用法: bb bundle build|status|patch|restore|selftest"
+   :requires ([cheshire.core :as json]
+              [bundle-ops :as bo])
    :task
-   (let [[command & args] *command-line-args*
-         manifest-path
-         "build/AKInterface.bundle.manifest.json"]
+   (let [[command & args] *command-line-args*]
      (case command
        "build"
        (do
          (apply shell "zig build bundle" args)
-         (let [manifest (json/parse-string (slurp manifest-path))]
+         (let [manifest (json/parse-string (slurp "build/AKInterface.bundle.manifest.json"))]
            (println)
            (println "Bundle built successfully")
            (println)
@@ -26,11 +25,45 @@
                     ["PlayTools" (get-in manifest ["upstream" "commit"])]
                     ["Patch" (get-in manifest ["patch" "sha256"])]
                     ["Signature" "ad-hoc, verified"]
-                    ["Manifest" manifest-path]]]
+                    ["Manifest" "build/AKInterface.bundle.manifest.json"]]]
              (println (clojure.core/format "%-12s %s" label value)))))
 
+       "status"
+       (doseq [line (bo/status-lines (bo/status (bo/game-ctx!)))]
+         (println line))
+
+       "patch"
+       (let [opts (into {}
+                        (map (fn [[k v]] [k v]))
+                        (partition 2 args))
+             result (bo/patch! (bo/game-ctx!)
+                               {:expected-executable-sha
+                                (get opts "--expected-executable-sha")
+                                :expected-installed-executable-sha
+                                (get opts "--expected-installed-executable-sha")})]
+         (println)
+         (println (if (:idempotent result)
+                    "Bundle already installed (idempotent)"
+                    "Bundle patched successfully"))
+         (println)
+         (println (clojure.core/format "%-17s %s" "Installed exec" (:executable-sha result)))
+         (println (clojure.core/format "%-17s %s" "First patch" (str (:first-patch result)))))
+
+       "restore"
+       (let [result (bo/restore! (bo/game-ctx!))]
+         (println)
+         (println (if (:idempotent result)
+                    "Bundle already clean (idempotent)"
+                    "Bundle restored to baseline successfully")))
+
+       "selftest"
+       (do
+         (bo/selftest!)
+         (println)
+         (println "Bundle selftest OK (sandbox lifecycle verified)"))
+
        (throw
-        (ex-info "用法: bb bundle build"
+        (ex-info "用法: bb bundle build|status|patch|restore|selftest"
                  {:args *command-line-args*}))))}
 
   debug
@@ -43,18 +76,17 @@ socket 默认从 local.edn 的游戏 .app 推导，或用 --socket 显式指定�
    :requires ([cheshire.core :as json]
               [debug-client :as dc])
    :task
-   (do
-     (let [args (vec *command-line-args*)
-           [socket args] (if (= "--socket" (first args))
-                           [(second args) (vec (drop 2 args))]
-                           [nil args])
-           method (first args)
-           params (if-let [raw (second args)]
-                    (json/parse-string raw)
-                    {})]
-       (when (nil? method)
-         (println "用法: bb debug [--socket <path>] <method> [json-params]")
-         (println "method 例: runtime.plugins / runtime.gates / runtime.info / fps.set")
-         (System/exit 1))
-       (let [response (dc/call socket method params)]
-         (println (json/generate-string response {:pretty true})))))}}}
+   (let [args (vec *command-line-args*)
+         [socket args] (if (= "--socket" (first args))
+                         [(second args) (vec (drop 2 args))]
+                         [nil args])
+         method (first args)
+         params (if-let [raw (second args)]
+                  (json/parse-string raw)
+                  {})]
+     (when (nil? method)
+       (println "用法: bb debug [--socket <path>] <method> [json-params]")
+       (println "method 例: runtime.plugins / runtime.gates / runtime.info / fps.set")
+       (System/exit 1))
+     (let [response (dc/call socket method params)]
+       (println (json/generate-string response {:pretty true}))))}}}

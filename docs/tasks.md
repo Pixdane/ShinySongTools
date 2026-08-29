@@ -277,6 +277,8 @@ bb bundle patch \
 
 `patch` 和 `restore` 的实际执行属于游戏修改操作，需要针对确切 executable SHA-256 的明确批准。完整 fingerprint 负责事务完整性；executable SHA-256 作为简短、明确的人工批准身份。task 的存在或先前执行过 `status` 不构成修改授权。
 
+以上 status/patch/restore 与事务逻辑已实现于 `tools/bundle_ops.clj`（fingerprint 采用 BundleFingerprintV1 的结构化条目比较；`.stage-*`/`.old-*` 同卷原子换入；drifted/interrupted 一律拒绝）。`bb bundle selftest` 在 `build/tmp/` 的沙箱 `.app` 上全生命周期演练这套事务（unmanaged → patch 拒绝路径 → patch → patched → 幂等 → drift 拒绝 → restore → clean → interrupted 拒绝），不接触真实游戏；真实 patch/restore 仍需上述批准。
+
 ## `debug`
 
 调用运行时 debug socket（JSON-RPC 2.0 over Unix domain socket，协议见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)）：

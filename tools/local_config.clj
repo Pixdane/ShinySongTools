@@ -43,28 +43,30 @@
           (.isFile contents) (.getPath contents)
           :else nil)))
 
-(defn- bundle-id
-  "从 Info.plist 读取 CFBundleIdentifier（plutil 是 macOS 系统自带工具）。"
-  [app]
+(defn- plist-value
+  "从 Info.plist 读取一个顶层键（plutil 是 macOS 系统自带工具）。"
+  [app key]
   (let [plist (or (plist-path app)
                   (throw (ex-info "Info.plist 不存在（根与 Contents/ 均未找到）"
                                   {:app app})))]
     (let [{:keys [exit out err]}
-          (shell/sh "plutil" "-extract" "CFBundleIdentifier" "raw" plist)]
+          (shell/sh "plutil" "-extract" key "raw" plist)]
       (when-not (zero? exit)
-        (throw (ex-info (str "无法读取 CFBundleIdentifier: " err)
+        (throw (ex-info (str "无法读取 " key ": " err)
                         {:app app :plist plist})))
       (str/trim out))))
 
 (defn- derive [app]
-  (let [id            (bundle-id app)
+  (let [id            (plist-value app "CFBundleIdentifier")
+        exec-name     (plist-value app "CFBundleExecutable")
         documents     (str (System/getProperty "user.home")
                            "/Library/Containers/" id "/Data/Documents")
         plug-ins      (if (.isDirectory (io/file app "Contents"))
                         (str app "/Contents/PlugIns")
                         (str app "/PlugIns"))]
-    {:app          app
-     :bundle-id    id
+    {:app           app
+     :bundle-id     id
+     :executable-name exec-name
      :documents    documents
      :debug-socket (str documents "/shiny-song-tools/debug.sock")
      :bundle       (str plug-ins "/AKInterface.bundle")}))
