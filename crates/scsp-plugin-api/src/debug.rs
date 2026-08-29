@@ -50,16 +50,22 @@ pub trait MainDebugTopic: 'static {
 pub struct DebugHandlerError(pub String);
 
 /// One wire request envelope; `id` travels with the typed payload through
-/// the type-erased channel.
+/// the type-erased channel. `generation` identifies the connection the
+/// request arrived on: responses carry it back so the transport can drop
+/// answers whose connection is gone instead of feeding them to the next
+/// client.
 pub struct DebugQueuedRequest {
     pub id: serde_json::Value,
     pub payload: Arc<dyn Any + Send + Sync>,
+    pub generation: u64,
 }
 
 /// Wire response envelope fragment owned by the registry plumbing.
 pub struct DebugResponse {
     pub id: serde_json::Value,
     pub result: Result<serde_json::Value, DebugWireError>,
+    /// Connection generation of the request this answer belongs to.
+    pub generation: u64,
 }
 
 /// Server-side error codes (docs wire table).
@@ -131,6 +137,7 @@ impl DebugTopicChannel {
         &self,
         id: serde_json::Value,
         payload: Arc<dyn Any + Send + Sync>,
+        generation: u64,
     ) -> Result<(), DebugWireError> {
         if self.pending.load(Ordering::Acquire) >= DEBUG_MAX_PENDING {
             return Err(DebugWireError {
@@ -141,7 +148,11 @@ impl DebugTopicChannel {
         self.inbox
             .lock()
             .expect("inbox lock")
-            .push_back(DebugQueuedRequest { id, payload });
+            .push_back(DebugQueuedRequest {
+                id,
+                payload,
+                generation,
+            });
         self.pending.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
@@ -285,8 +296,15 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>> crate::host::Upd
         }
         let state = self.state.as_mut().expect("state initialized above");
         let ctx = UpdateCtx { main };
-        for queued in requests {
-            let result: Result<serde_json::Value, DebugWireError> = (|| {
+        let mut iter = requests.into_iter();
+        while let Some(queued) = iter.next() {
+            // Per-request panic boundary: a handler panic answers the
+            // current request `plugin_unavailable`, returns the undelivered
+            // remainder to the inbox, and fails this system run — the
+            // driver retires the owner, whose retirement path answers the
+            // re-queued requests (docs: handler panic → owner-local 禁用).
+            // Nothing is lost and no pending slot leaks.
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Exactly one handler consumes the request: take the Arc
                 // contents without requiring Clone.
                 // The request was boxed on enqueue; this system is the sole
@@ -326,14 +344,46 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>> crate::host::Upd
                         message,
                     }),
                 }
-            })();
-            {
-                let mut outbox = self.channel.outbox.lock().expect("outbox lock");
-                outbox.push(DebugResponse {
+            }));
+            let result = match outcome {
+                Ok(result) => result,
+                Err(_) => {
+                    {
+                        let mut inbox = self.channel.inbox.lock().expect("inbox lock");
+                        // Push back in reverse so FIFO order is preserved.
+                        for leftover in iter.by_ref().rev() {
+                            inbox.push_front(leftover);
+                        }
+                    }
+                    self.channel
+                        .outbox
+                        .lock()
+                        .expect("outbox lock")
+                        .push(DebugResponse {
+                            id: queued.id,
+                            generation: queued.generation,
+                            result: Err(DebugWireError {
+                                code: DebugWireErrorCode::ServerError(
+                                    DebugServerError::PluginUnavailable,
+                                ),
+                                message: "debug handler panicked".to_owned(),
+                            }),
+                        });
+                    self.channel.leave_pending();
+                    return Err(PluginError::Message(
+                        "debug handler panicked; retiring owner debug routes",
+                    ));
+                }
+            };
+            self.channel
+                .outbox
+                .lock()
+                .expect("outbox lock")
+                .push(DebugResponse {
                     id: queued.id,
+                    generation: queued.generation,
                     result,
                 });
-            }
             self.channel.leave_pending();
         }
         Ok(())
@@ -458,8 +508,8 @@ pub(crate) struct CallbackRelaySystem<T: CallbackDebugTopic> {
     channel: Arc<DebugTopicChannel>,
     request_slot: Arc<scsp_core::SharedSlot<T::Request>>,
     response_slot: Arc<scsp_core::SharedSlot<Result<T::Response, DebugHandlerError>>>,
-    /// Delivered-but-unanswered request ids, FIFO.
-    in_flight: std::collections::VecDeque<serde_json::Value>,
+    /// Delivered-but-unanswered requests, FIFO: (id, connection generation).
+    in_flight: std::collections::VecDeque<(serde_json::Value, u64)>,
 }
 
 impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySystem<T> {
@@ -473,7 +523,7 @@ impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySys
                     Ok(typed) => {
                         if self.request_slot.try_send(typed).is_ok() {
                             let queued = inbox.pop_front().expect("front checked above");
-                            self.in_flight.push_back(queued.id);
+                            self.in_flight.push_back((queued.id, queued.generation));
                         }
                     }
                     Err(_) => {
@@ -481,6 +531,7 @@ impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySys
                         let mut outbox = self.channel.outbox.lock().expect("outbox lock");
                         outbox.push(DebugResponse {
                             id: queued.id,
+                            generation: queued.generation,
                             result: Err(DebugWireError {
                                 code: DebugWireErrorCode::ServerError(
                                     DebugServerError::InternalError,
@@ -496,7 +547,7 @@ impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySys
 
         // 2. Collect responses; FIFO pairing with the delivered ids.
         while let Some(response) = self.response_slot.take() {
-            let Some(id) = self.in_flight.pop_front() else {
+            let Some((id, generation)) = self.in_flight.pop_front() else {
                 // A response without a delivered request cannot be
                 // correlated: drop it (no id to report).
                 break;
@@ -521,7 +572,11 @@ impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySys
                 }),
             };
             let mut outbox = self.channel.outbox.lock().expect("outbox lock");
-            outbox.push(DebugResponse { id, result });
+            outbox.push(DebugResponse {
+                id,
+                generation,
+                result,
+            });
             self.channel.leave_pending();
         }
         Ok(())

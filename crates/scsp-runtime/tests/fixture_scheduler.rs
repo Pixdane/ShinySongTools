@@ -26,7 +26,7 @@ use shiny_song_tools::scheduler::tls_snapshot;
 use shiny_song_tools::{
     App, Handoff, Il2CppObjectOpaque, MethodInfoOpaque, SchedulerContext, SchedulerHook,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// Sentinel `this`/`method` stand-ins: every frame asserts the replacement
@@ -290,6 +290,14 @@ fn before_original_panic_compensates_original_exactly_once() {
             ctx.runtime_gate.reader(),
         );
         app.add_plugin(PanicOnDropPlugin);
+        // A separate owner whose resource counts drops: it is never rolled
+        // back (the frame-level unwind aborts the whole startup pass), so a
+        // nonzero counter would mean the App itself was dropped during
+        // unwind instead of retained by the frame's Drop guard.
+        let probe_dropped = Arc::new(AtomicUsize::new(0));
+        app.add_plugin(RetentionProbePlugin {
+            dropped: Arc::clone(&probe_dropped),
+        });
         assert!(ctx.handoff.publish(Box::new(app)));
 
         run_frame(ctx);
@@ -302,7 +310,40 @@ fn before_original_panic_compensates_original_exactly_once() {
         assert!(!ctx.runtime_gate.reader().is_open());
         // The frame never committed its App: TLS stays Busy (retention root).
         assert_eq!(tls_snapshot().0, "busy");
+        assert_eq!(
+            probe_dropped.load(Ordering::Acquire),
+            0,
+            "the App must be retained by the frame, never dropped mid-unwind"
+        );
     });
+}
+
+/// Counts drops of one world resource in a plugin that is never rolled
+/// back: its only path to `drop` is the App itself being dropped.
+struct RetentionProbePlugin {
+    dropped: Arc<AtomicUsize>,
+}
+
+impl scsp_plugin_api::Plugin for RetentionProbePlugin {
+    fn name(&self) -> &'static str {
+        "retention-probe"
+    }
+
+    fn build(
+        &self,
+        ctx: &mut scsp_plugin_api::AppCtx<'_>,
+    ) -> Result<(), scsp_plugin_api::PluginError> {
+        ctx.insert_resource(RetentionProbe(Arc::clone(&self.dropped)))
+    }
+}
+
+#[derive(bevy_ecs::prelude::Resource)]
+struct RetentionProbe(Arc<AtomicUsize>);
+
+impl Drop for RetentionProbe {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 // ---------------------------------------------------------------------------

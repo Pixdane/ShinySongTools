@@ -38,8 +38,14 @@ pub fn build(b: *std.Build) void {
     //    state; this command executes on every entry into the graph. The
     //    staticlib path is declared as a file input of the link step so the
     //    link output is invalidated when the staticlib content changes.
+    //    The `debug` feature ships the DebugPlugin capability in the bundle
+    //    (v1 deliverable, docs/runtime-architecture.md): whether the debug
+    //    plane actually starts stays runtime-config-gated
+    //    (`debug.enabled`, fail-closed), so a disabled config behaves
+    //    identically to a build without the feature.
     const cargo_run = b.addSystemCommand(&.{
-        "cargo", "build", "--release", "--target", "aarch64-apple-darwin",
+        "cargo",       "build",     "--release", "--target", "aarch64-apple-darwin",
+        "-p",          "shiny-song-tools",       "--features", "debug",
     });
     const staticlib = b.path("build/target/aarch64-apple-darwin/release/libshiny_song_tools.a");
 

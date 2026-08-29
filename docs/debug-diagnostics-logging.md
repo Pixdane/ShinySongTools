@@ -70,7 +70,7 @@ Observability queue 与业务 route 可复用同一底层 bounded queue crate，
 
 ## Debug：wire 与 transport（JSON-RPC 2.0）
 
-v1 transport 为本机 Unix domain socket + length-prefixed JSON-RPC 2.0，不加 HTTP/WebSocket/浏览器 bridge。唯一 socket 路径为入口 Documents 路径下 `shiny-song-tools/debug.sock`；权限 0600；v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接集合）。每个 frame 先 4 字节 big-endian 长度再 JSON UTF-8 bytes，长度与 frame 受固定内部上限；超限回 `payload_too_large` 并保持连接。
+v1 transport 为本机 Unix domain socket + length-prefixed JSON-RPC 2.0，不加 HTTP/WebSocket/浏览器 bridge。唯一 socket 路径为入口 Documents 路径下 `shiny-song-tools/debug.sock`；权限 0600；v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接集合；accept 队列非阻塞轮询，正在服务时到达的新连接立即关闭）。每个 frame 先 4 字节 big-endian 长度再 JSON UTF-8 bytes，长度与 frame 受固定内部上限；超限回 `payload_too_large` 并保持连接。transport 的请求/响应队列有界：请求队列溢出回 `queue_full`，响应队列溢出丢弃最新响应（客户端停止读取不得撑大运行时内存）。request 与 response 携带 connection generation：连接断开后，旧会话尚未处理的请求被丢弃、迟到响应不写入新连接，会话之间不串扰。
 
 request（JSON-RPC 2.0）：
 
@@ -101,7 +101,7 @@ request（JSON-RPC 2.0）：
 | params 不符合该 topic 的 typed schema | -32602 invalid params | — |
 | runtime 不可用 / 队列满 / payload 超限 / 插件不可用 / handler 业务错误 / 内部错误 | -32000 server error | `runtime_unavailable` / `queue_full` / `payload_too_large` / `plugin_unavailable` / `handler_error` / `internal_error` |
 
-无法关联 request 的协议错误用 `id: null` 回复，不进入 pending；这些协议错误保持连接并继续服务后续 frame。I/O worker 处理顺序：长度上限 → 读完整 frame → JSON 解析 → envelope/id 校验 → topic 查找 → typed params 反序列化 → pending 容量 → 投递 DebugPlugin。任一步失败都不触达插件。
+无法关联 request 的协议错误用 `id: null` 回复，不进入 pending；这些协议错误保持连接并继续服务后续 frame。I/O worker 处理顺序：长度上限 → 读完整 frame → JSON 解析 → envelope/id 校验 → transport 请求队列容量 → 投递 DebugPlugin；dispatch（主线程 Update system）侧再依次执行 topic 查找 → RuntimeGate/owner gate 检查 → typed params 反序列化 → topic pending 容量 → 入 channel。任一步失败都不触达插件。
 
 ## Debug：typed topic 与 dispatch 流
 

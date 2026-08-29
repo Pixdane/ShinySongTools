@@ -250,7 +250,7 @@ fn wait_for<F: FnMut() -> Option<T>, T>(mut poll: F) -> T {
 #[test]
 fn fps_plugin_debug_round_trip_over_uds() {
     let gate = RuntimeGate::new();
-    let data_root = std::env::temp_dir().join(format!("scsp-fixture-fps-{}", std::process::id()));
+    let data_root = std::env::temp_dir().join(format!("scsp-fps-{}", std::process::id()));
     let mut app = App::new(
         scsp_plugin_api::RuntimeConfig {
             debug: scsp_plugin_api::DebugConfig { enabled: true },

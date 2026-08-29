@@ -292,33 +292,44 @@ impl SchedulerFrame<'_> {
         // 3. Claim the App according to TLS and set Busy (very short RefCell
         //    borrow, released immediately).
         self.claim_app();
-        let Some(mut app) = self.app.take() else {
+        if self.app.is_none() {
             // Nested callback (Busy), Pending handoff, Exited, or
             // Unavailable: passthrough only.
             self.call_original_once();
             self.commit_phase_after_failed_frame();
             return;
-        };
+        }
 
         // 4. Run the driver: first frame Startup only, later frames the
         //    fixed Update driver. The RuntimeGate is opened by the startup
         //    driver's caller — inside the App, after all owners complete.
+        //
+        //    The App stays owned by the frame for the whole driver (only a
+        //    short &mut borrow is taken): any unwind in a driver stage
+        //    leaves it in `self.app`, so the frame's Drop retains (leaks)
+        //    it instead of dropping plugin state mid-unwind
+        //    (docs/runtime-crate.md 兜底 Drop：宁可失去回收，也不得在
+        //    unwind 中意外 drop App).
         let token: MainThreadToken = unsafe {
             // SAFETY: reviewed scheduler boundary — the identity predicate
             // passed in step 2 for this frame.
             MainThreadToken::assume_main_thread()
         };
-        if !app.startup_completed() {
-            let _report = app.run_startup(&token);
-            // First Startup driver completed and the App is still runnable:
-            // the runtime opens the RuntimeGate LAST. Individual plugin
-            // retirements are owner-local failures (runtime-crate.md: 单个
-            // 插件的 Startup/Update 失败不是 scheduler failure) and do not
-            // block the gate or the remaining plugins; only a frame-level
-            // unwind above reaches the global-failure path.
-            self.context.runtime_gate.open();
-        } else {
-            let _ = app.run_update(&token);
+        {
+            let app = self.app.as_mut().expect("claimed above");
+            if !app.startup_completed() {
+                let _report = app.run_startup(&token);
+                // First Startup driver completed and the App is still
+                // runnable: the runtime opens the RuntimeGate LAST.
+                // Individual plugin retirements are owner-local failures
+                // (runtime-crate.md: 单个插件的 Startup/Update 失败不是
+                // scheduler failure) and do not block the gate or the
+                // remaining plugins; only a frame-level unwind above
+                // reaches the global-failure path.
+                self.context.runtime_gate.open();
+            } else {
+                let _ = app.run_update(&token);
+            }
         }
 
         // 5. Call original while TLS stays Busy (App still on this stack).
@@ -327,7 +338,9 @@ impl SchedulerFrame<'_> {
         // 6. Commit the App back: Exited on global failure, otherwise
         //    Running. Startup-phase plugin retirements do not exit the App.
         let exit = self.context.failed.load(Ordering::Acquire);
-        commit_tls(app, exit);
+        if let Some(app) = self.app.take() {
+            commit_tls(app, exit);
+        }
         self.tls_committed = true;
     }
 

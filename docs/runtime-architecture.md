@@ -28,7 +28,7 @@
 | [Runtime：bootstrap 与 scheduler](runtime-crate.md) | `scsp-runtime` | `scsp_start`、bootstrap worker、readiness 阶梯、Handoff、TLS、global failure |
 | [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md) | `scsp-runtime`（DebugPlugin）+ 跨 crate | Observability 与 DebugPlugin（JSON-RPC over UDS、自省 topic） |
 
-crate 收敛为三个：`scsp-core`、`scsp-plugin-api`、`scsp-runtime`。原 plugin-system 职责并入 `scsp-runtime`（没有"只要 plugin-system 不要 bootstrap"的第二消费者）；功能插件只依赖 `scsp-plugin-api`，隔离目标不变。物理 Cargo package 在实现阶段创建，名称与拆包可调。
+crate 收敛为三个：`scsp-core`、`scsp-plugin-api`、`scsp-runtime`（物理 Cargo package 已创建；另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `scsp-runtime`（没有"只要 plugin-system 不要 bootstrap"的第二消费者）；功能插件只依赖 `scsp-plugin-api`，隔离目标不变。
 
 ## 依赖方向
 
@@ -91,7 +91,7 @@ PlayTools AKPlugin
 
 ## 证据边界
 
-设计可以采用实验仓库已经建立的可行性结论，但实验结果、fixture 结果、生产实现和当前游戏版本实机结果必须分别陈述，任何一层不得自动外推为下一层已经成立。当前实验已为精确版本提供 MethodPointer replacement、callback/original/restore 和 exact-handle IL2CPP 加载的设计依据；本生产 workspace 仍处于文档设计阶段。
+设计可以采用实验仓库已经建立的可行性结论，但实验结果、fixture 结果、生产实现和当前游戏版本实机结果必须分别陈述，任何一层不得自动外推为下一层已经成立。当前实验已为精确版本提供 MethodPointer replacement、callback/original/restore 和 exact-handle IL2CPP 加载的设计依据；生产 workspace 已实现类型驱动 v2 代码骨架，§2.12 的无游戏 fixture 验证门全部通过，**实机验证未开始**——fixture 结果不外推为实机结论。v1 的 FPS 解锁测试插件尚未实现：其 hook 目标（QualitySettings setter）的调用约定尚未经实验验证，按证据边界须先立项实验，不得由 LateUpdate 的 ABI 外推。
 
 ## 非目标
 
@@ -106,6 +106,6 @@ PlayTools AKPlugin
 
 ## 当前待打磨与待设计
 
-待打磨：bevy_ecs/tracing 的物理模块布局、owner ledger 与 PluginInventory 的内部表示、`define_hook_site!` 宏形态、`SharedSlot` 锁策略（`try_lock` 优先）、mailbox 内部存储、readiness timeout/backoff 参数、Unified Logging 字段、自省 topic 的字段集合。已收敛：phase 类型、route 三种 mailbox、hook typestate、Debug dispatch 流、错误体系、config fail-closed。
+待打磨：exact UnityFramework 的 image identity 格式（当前实现仅匹配文件名，身份校验过弱）、`runtime.info` 的 readiness 阶梯结果字段、per-category os_log 句柄（现单 category + target 区分）、生产 DataRoot 下 debug.sock 的 `SUN_LEN` 路径长度上限（容器 bundle-id 过长时 bind 会失败，需设计短路径方案）、DebugPlugin 自省外的 request 生命周期压测。已收敛并实现：三 crate 物理布局、phase 类型、route 三种 mailbox（`LatestCell`/`BoundedQueue`/`SharedSlot`）、hook typestate（slot 事实来源 dispatch）、`define_hook_site!` 宏、owner ledger（`ResourceLedgerEntry`）、Debug dispatch 流、错误体系、config fail-closed、readiness 阶梯 1 轮询参数（`IMAGE_POLL_*`）、compact 事件字段。
 
-待设计：plugin/callback 物理卸载、scheduler quiescence、翻译插件立项（社区格式兼容 + callback-safe 快照替换协议）、超出薄事件层的高级诊断与 crash artifact。
+待设计：plugin/callback 物理卸载、scheduler quiescence、FPS 插件立项（target ABI 实验验证 + `[fps]` config 段）、翻译插件立项（社区格式兼容 + callback-safe 快照替换协议）、超出薄事件层的高级诊断与 crash artifact。

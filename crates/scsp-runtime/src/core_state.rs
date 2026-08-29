@@ -91,6 +91,7 @@ impl TopicRegistry {
             for request in queued {
                 outbox.push(DebugResponse {
                     id: request.id,
+                    generation: request.generation,
                     result: Err(DebugWireError {
                         code: DebugWireErrorCode::ServerError(DebugServerError::PluginUnavailable),
                         message: "plugin retired; request not delivered".to_owned(),

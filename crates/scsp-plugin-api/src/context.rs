@@ -8,12 +8,13 @@
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::Resource;
 use bevy_ecs::world::World;
-use scsp_core::{DataRoot, OwnerId, PluginError};
+use scsp_core::{DataRoot, GateReader, OwnerId, PluginError};
 use std::any::Any;
 use std::sync::Arc;
 
 use crate::RestoreError;
 use crate::config::RuntimeConfig;
+use crate::debug::{DebugIntrospection, DebugTopicLookup};
 use crate::hook::{HookBuilder, HookSite, Unpublished};
 use crate::host::{
     BoxedStartupSystem, BoxedUpdateSystem, MessageRegister, PluginHost, ResourceInsert,
@@ -31,24 +32,44 @@ use std::marker::PhantomData;
 
 /// Restricted facade for one plugin's build / startup operations.
 ///
-/// The `host` field is the internal seam the runtime implements; plugin
-/// code should use the `AppCtx` methods. It is `pub` only because the
-/// runtime crate is a separate package and needs to construct and drive
-/// the facade.
+/// The `host` seam is `pub(crate)`: plugin code cannot bypass [`AppCtx`]
+/// methods, so it cannot register raw boxed runners (direct `&mut World`
+/// access), reach the method resolver outside the hook typestate, or touch
+/// the owner ledger. The runtime crate drives the facade through the public
+/// constructor and methods only.
 pub struct AppCtx<'host> {
-    pub host: &'host mut dyn PluginHost,
+    pub(crate) host: &'host mut dyn PluginHost,
 }
 
 impl<'host> AppCtx<'host> {
     pub fn new(host: &'host mut dyn PluginHost) -> Self {
         Self { host }
     }
-    // (constructed by the runtime through this crate-private constructor)
 
     /// Owner id of the plugin this context belongs to.
     #[must_use]
     pub fn owner_id(&mut self) -> OwnerId {
         self.host.owner_id()
+    }
+
+    /// Reader side of the process runtime gate. Infrastructure handle for
+    /// the built-in DebugPlugin transport, not a plugin message surface.
+    #[must_use]
+    pub fn runtime_gate_reader(&mut self) -> GateReader {
+        self.host.runtime_gate_reader()
+    }
+
+    /// Live lookup over registered debug topics. Infrastructure handle for
+    /// the built-in DebugPlugin dispatch.
+    #[must_use]
+    pub fn debug_topic_registry(&mut self) -> Arc<dyn DebugTopicLookup> {
+        self.host.topic_registry_handle()
+    }
+
+    /// Runtime introspection snapshots for the built-in `runtime.*` topics.
+    #[must_use]
+    pub fn runtime_introspection(&mut self) -> Option<Arc<dyn DebugIntrospection>> {
+        self.host.introspection_handle()
     }
 
     /// Typed configuration snapshot (already fail-closed by the runtime).

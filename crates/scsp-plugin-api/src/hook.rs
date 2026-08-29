@@ -99,6 +99,20 @@ struct SiteInner<T: HookTarget, C> {
     /// handle and the ledger restore action: set once installation is
     /// confirmed by readback, cleared once restore is confirmed.
     installed: Arc<AtomicBool>,
+    /// Live slot state, published by `install` BEFORE the CAS. Dispatch
+    /// treats the slot value as the single source of truth (docs: 实际
+    /// slot 始终是 ownership 的最终事实来源), which closes the install and
+    /// restore windows: while the replacement is already (or still) in the
+    /// slot, a concurrent game call passes through the original even though
+    /// the flag has not caught up.
+    active: std::sync::OnceLock<ActiveHook>,
+}
+
+/// Slot ownership as observed by dispatch: the bound [`MethodPointerSlot`]
+/// and the replacement address installed into it.
+struct ActiveHook {
+    slot: Arc<MethodPointerSlot>,
+    replacement_addr: usize,
 }
 
 /// The process-lifetime static site of one hook target (retention root).
@@ -108,7 +122,8 @@ pub struct HookSite<T: HookTarget, C> {
 
 // Safety: the site is shared across the callback domain and the main
 // domain. `SiteInner` only holds `Arc<C>` (C: Send + Sync), gate readers
-// (atomics), a copyable function pointer, and atomics.
+// (atomics), a copyable function pointer, atomics, and a `OnceLock` over
+// an `Arc<MethodPointerSlot>` plus a `usize` — all `Send + Sync`.
 unsafe impl<T: HookTarget + Sync, C: Send + Sync> Sync for HookSite<T, C> {}
 unsafe impl<T: HookTarget + Send, C: Send + Sync> Send for HookSite<T, C> {}
 
@@ -134,6 +149,10 @@ impl<T: HookTarget, C> HookSite<T, C> {
     }
 
     /// `true` while this site's hook is installed and both gates are open.
+    ///
+    /// Slot-truth based, matching [`HookSite::dispatch`]: the conservative
+    /// `installed` flag only guards duplicate install/restore, not the
+    /// dispatch decision.
     #[must_use]
     pub fn is_dispatchable(&self) -> bool
     where
@@ -142,7 +161,10 @@ impl<T: HookTarget, C> HookSite<T, C> {
     {
         match self.inner.get() {
             Some(inner) => {
-                inner.installed.load(Ordering::Acquire)
+                inner
+                    .active
+                    .get()
+                    .is_some_and(|active| active.slot.current() == Some(active.replacement_addr))
                     && inner.gates.runtime.is_open()
                     && inner.gates.plugin.is_open()
             }
@@ -175,6 +197,35 @@ impl<T: HookTarget, C: Send + Sync> HookSite<T, C> {
     /// wrap the whole `dispatch` call in its own `catch_unwind` so no panic
     /// ever crosses FFI — an unwind reaching `extern "C"` aborts the
     /// process.
+    /// Dispatch entry for the author's replacement wrapper.
+    ///
+    /// Order of resolution:
+    /// 1. Site not published / hook never installed → `fallback` (never
+    ///    call the original: its address was never captured here).
+    /// 2. Slot no longer holds this site's replacement → `fallback`. The
+    ///    slot VALUE is the source of truth, so the CAS→flag windows of
+    ///    install and restore are safe: while the replacement is reachable
+    ///    in the slot, the flag state is irrelevant and the original is
+    ///    always available (a concurrent game call in that window is
+    ///    passed through, never skipped).
+    /// 3. Either gate closed → `passthrough` with the typed original,
+    ///    exactly once; the handler is unreachable.
+    /// 4. Gates open → run the handler with a [`Callback`]. If the handler
+    ///    panics before invoking the original, the original is called once
+    ///    via `passthrough`; if it panics during or after the original
+    ///    call, `fallback` produces the return value (the original is never
+    ///    retried). If the handler returns normally without calling the
+    ///    original, the exactly-once contract forces one passthrough call.
+    ///
+    /// # Panic contract (author-owned `extern "C"` boundary)
+    ///
+    /// The handler's panic is contained here, but the recovery paths call
+    /// `passthrough`/`fallback` OUTSIDE that containment: a panic raised by
+    /// the original call itself (or by the fallback) escapes `dispatch`. The
+    /// author's replacement wrapper is the `extern "C"` boundary and must
+    /// wrap the whole `dispatch` call in its own `catch_unwind` so no panic
+    /// ever crosses FFI — an unwind reaching `extern "C"` aborts the
+    /// process.
     pub fn dispatch<R>(
         &'static self,
         passthrough: impl FnOnce(T::Original) -> R,
@@ -184,7 +235,10 @@ impl<T: HookTarget, C: Send + Sync> HookSite<T, C> {
         let Some(inner) = self.inner.get() else {
             return fallback();
         };
-        if !inner.installed.load(Ordering::Acquire) {
+        let Some(active) = inner.active.get() else {
+            return fallback();
+        };
+        if active.slot.current() != Some(active.replacement_addr) {
             return fallback();
         }
         let addr = inner.original_addr.load(Ordering::Acquire);
@@ -308,6 +362,7 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
             replacement,
             original_addr: AtomicUsize::new(0),
             installed: Arc::new(AtomicBool::new(false)),
+            active: std::sync::OnceLock::new(),
         };
         self.site
             .inner
@@ -346,14 +401,26 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
         let method = resolver.resolve(&T::TARGET)?;
         T::validate(&method)?;
         let memory = resolver.slot_memory(&method);
-        let slot = MethodPointerSlot::bind(memory)?;
+        let slot = Arc::new(MethodPointerSlot::bind(memory)?);
         let replacement_addr = T::replacement_addr(inner.replacement);
 
-        // Publish the original address before the CAS: once the replacement
-        // is reachable, dispatch must always be able to call the original.
+        // Publish the original address AND the live slot state before the
+        // CAS: once the replacement is reachable, dispatch must always be
+        // able to passthrough the original — including a call landing in
+        // the window between this CAS and the `installed` flag store below.
         inner
             .original_addr
             .store(slot.original(), Ordering::Release);
+        if inner
+            .active
+            .set(ActiveHook {
+                slot: Arc::clone(&slot),
+                replacement_addr,
+            })
+            .is_err()
+        {
+            return Err(HookError::SiteAlreadyRegistered.into());
+        }
 
         let install_result = slot.install(replacement_addr);
         if let Err(HookError::InstallationFailed) = install_result {
@@ -408,7 +475,7 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
 /// Installation record shared between the returned handle, the static
 /// site's dispatch flag, and the ledger restore action.
 struct HookState {
-    slot: MethodPointerSlot,
+    slot: Arc<MethodPointerSlot>,
     replacement: usize,
     installed: Arc<AtomicBool>,
 }

@@ -7,6 +7,13 @@
 //! topic registry (main domain); built-in `runtime.*` introspection topics
 //! read the runtime snapshot.
 //!
+//! Session hygiene: every request carries the connection generation it
+//! arrived on and every response carries it back — a request or answer whose
+//! connection is gone is dropped instead of being mixed into the next
+//! session. The transport queues are bounded (overflow answers `queue_full`
+//! on the request side, drops the newest response on the write side), so a
+//! stalled or malicious client cannot grow runtime memory without bound.
+//!
 //! Dispatch flow: this plugin's Update system (registered like any plugin
 //! system) routes wire requests into topic channels and drains responses
 //! back to the wire; the owner's handler systems do the typed work. Gates:
@@ -21,23 +28,36 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Frame size ceiling; oversize answers `payload_too_large` and keeps the
 /// connection (the oversized payload is discarded).
 const MAX_FRAME_BYTES: u32 = 1024 * 1024;
 
-/// Decoded wire request.
+/// Bounded transport inbox: decoded requests awaiting the dispatch Update
+/// system. Overflow answers `queue_full` for the offending frame.
+const MAX_INBOX_REQUESTS: usize = 128;
+
+/// Bounded transport outbox: encoded responses awaiting the wire. Overflow
+/// drops the newest response (the client stopped reading; it must not grow
+/// runtime memory).
+const MAX_OUTBOX_RESPONSES: usize = 256;
+
+/// Decoded wire request. `generation` identifies the connection this frame
+/// arrived on; the dispatch system drops requests of earlier generations.
 pub struct WireRequest {
     pub id: serde_json::Value,
     pub method: String,
     pub params: serde_json::Value,
+    pub generation: u64,
 }
 
-/// Fully formed response body (the JSON-RPC envelope minus the frame length).
+/// Fully formed response body (the JSON-RPC envelope minus the frame
+/// length) plus the connection generation it belongs to.
 pub struct WireResponse {
     pub body: serde_json::Value,
+    pub generation: u64,
 }
 
 /// Shared transport state between the I/O worker and the dispatch system.
@@ -54,6 +74,9 @@ pub struct DebugTransport {
     /// 重复回 `invalid_request`；response 写回后 id 可复用。 Cleared at
     /// connection start; `id: null` is not trackable and never recorded.
     active_ids: Mutex<Vec<String>>,
+
+    /// Monotonic connection counter: bumped once per accepted connection.
+    generation: AtomicU64,
 }
 
 /// Serialized form of a trackable (non-null) request id; `None` for `null`.
@@ -77,11 +100,16 @@ impl DebugTransport {
         let listener = UnixListener::bind(&socket_path)?;
         // 0600: only the game's own user may talk to the debug plane.
         std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+        // Nonblocking accept: while one connection is being served, the
+        // worker can still poll the queue and close further clients
+        // immediately (docs: 已有连接时新连接直接关闭).
+        listener.set_nonblocking(true)?;
         let transport = Arc::new(Self {
             inbox: Mutex::new(Vec::new()),
             outbox: Mutex::new(Vec::new()),
             runtime_gate,
             active_ids: Mutex::new(Vec::new()),
+            generation: AtomicU64::new(0),
         });
         let worker_transport = Arc::clone(&transport);
         std::thread::Builder::new()
@@ -95,23 +123,34 @@ impl DebugTransport {
         Ok(transport)
     }
 
-    fn push_request(&self, request: WireRequest) {
-        self.inbox.lock().expect("inbox lock").push(request);
+    /// Generation of the connection being accepted (monotonic, starts at 1).
+    fn next_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
-    fn push_response(&self, body: serde_json::Value) {
-        self.outbox
-            .lock()
-            .expect("outbox lock")
-            .push(WireResponse { body });
+    fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
-    fn respond_ok(&self, id: serde_json::Value, result: serde_json::Value) {
+    fn push_response(&self, body: serde_json::Value, generation: u64) {
+        let mut outbox = self.outbox.lock().expect("outbox lock");
+        if outbox.len() >= MAX_OUTBOX_RESPONSES {
+            // The client stopped reading; drop the newest answer instead of
+            // growing without bound. The affected request hangs on the
+            // client side — a stalled client must not grow runtime memory.
+            drop(outbox);
+            tracing::warn!(target: "debug", "debug outbox capacity reached; dropping a response");
+            return;
+        }
+        outbox.push(WireResponse { body, generation });
+    }
+
+    fn respond_ok(&self, id: serde_json::Value, result: serde_json::Value, generation: u64) {
         let mut body = serde_json::Map::new();
         body.insert("jsonrpc".into(), serde_json::Value::String("2.0".into()));
         body.insert("id".into(), id);
         body.insert("result".into(), result);
-        self.push_response(serde_json::Value::Object(body));
+        self.push_response(serde_json::Value::Object(body), generation);
     }
 
     fn respond_error(
@@ -120,6 +159,7 @@ impl DebugTransport {
         code: i64,
         data_code: Option<&str>,
         message: &str,
+        generation: u64,
     ) {
         let mut body = serde_json::Map::new();
         body.insert("jsonrpc".into(), serde_json::Value::String("2.0".into()));
@@ -135,27 +175,21 @@ impl DebugTransport {
             error.insert("message".into(), serde_json::Value::String(message.into()));
         }
         body.insert("error".into(), serde_json::Value::Object(error));
-        self.push_response(serde_json::Value::Object(body));
+        self.push_response(serde_json::Value::Object(body), generation);
     }
 }
 
 /// I/O worker: single connection, framed reads, response writes.
-///
-/// Docs: v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接
-/// 集合）。 A connection arriving while one is being served is closed
-/// immediately instead of queueing in the accept backlog.
 fn io_worker(listener: UnixListener, transport: Arc<DebugTransport>) {
-    let busy = AtomicBool::new(false);
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {
-                if busy.swap(true, Ordering::AcqRel) {
-                    // Second client: drop the stream = close the connection.
-                    continue;
-                }
-                // Peer hangup or IO error: close and accept the next one.
-                let _ = handle_connection(&stream, &transport);
-                busy.store(false, Ordering::Release);
+                // Peer hangup or IO error: close and take the next one.
+                let _ = handle_connection(&stream, &listener, &transport);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                // Nothing waiting; keep the loop cheap.
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
             Err(_) => {
                 // Transient accept failure: back off and retry; the transport
@@ -166,8 +200,21 @@ fn io_worker(listener: UnixListener, transport: Arc<DebugTransport>) {
     }
 }
 
-fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io::Result<()> {
+fn handle_connection(
+    stream: &UnixStream,
+    listener: &UnixListener,
+    transport: &DebugTransport,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_millis(20)))?;
+    // Session scope: everything this connection produces carries its
+    // generation; leftovers of earlier connections are dropped below and
+    // late answers of THIS connection are dropped once it is replaced.
+    let generation = transport.next_generation();
+    transport
+        .outbox
+        .lock()
+        .expect("outbox lock")
+        .retain(|response| response.generation == generation);
     // Fresh connection scope: id uniqueness applies per connection; a
     // still-pending request of a previous connection does not block reuse.
     transport
@@ -179,21 +226,32 @@ fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io
     let mut length_read = 0usize;
     let mut body: Vec<u8> = Vec::new();
     loop {
-        // Responses first (bounded drain).
-        let responses: Vec<serde_json::Value> = {
+        // A connection arriving while this one is served is closed
+        // immediately (docs: 已有连接时新连接直接关闭，不维护连接集合).
+        // The nonblocking listener makes that real during the read/write
+        // waits of the served connection.
+        if let Ok((incoming, _)) = listener.accept() {
+            drop(incoming);
+        }
+        // Responses first (bounded drain); answers of dead connections are
+        // dropped instead of being mixed into this session.
+        let responses: Vec<WireResponse> = {
             let mut outbox = transport.outbox.lock().expect("outbox lock");
-            outbox.drain(..).map(|response| response.body).collect()
+            outbox.drain(..).collect()
         };
-        for response_body in responses {
+        for response in responses {
+            if response.generation != generation {
+                continue;
+            }
             // Response written → the id becomes reusable on this connection.
-            if let Some(key) = response_body.get("id").and_then(trackable_id) {
+            if let Some(key) = response.body.get("id").and_then(trackable_id) {
                 transport
                     .active_ids
                     .lock()
                     .expect("active ids lock")
                     .retain(|active| *active != key);
             }
-            let frame = encode_frame(&response_body)?;
+            let frame = encode_frame(&response.body)?;
             (&*stream).write_all(&frame)?;
         }
         (&*stream).flush()?;
@@ -212,6 +270,7 @@ fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io
                             -32000,
                             Some(DebugServerError::PayloadTooLarge.code_name()),
                             "frame exceeds the payload limit",
+                            generation,
                         );
                         // Discard the oversized payload to stay framed.
                         discard(stream, u64::from(length))?;
@@ -219,7 +278,7 @@ fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io
                     }
                     body.resize(length as usize, 0);
                     read_exact_resilient(stream, &mut body)?;
-                    transport.handle_frame(&body);
+                    transport.handle_frame(&body, generation);
                     body.clear();
                 }
             }
@@ -272,22 +331,40 @@ fn encode_frame(body: &serde_json::Value) -> std::io::Result<Vec<u8>> {
 }
 
 impl DebugTransport {
-    fn handle_frame(&self, bytes: &[u8]) {
+    fn handle_frame(&self, bytes: &[u8], generation: u64) {
         let parsed: Result<serde_json::Value, _> = serde_json::from_slice(bytes);
         let value = match parsed {
             Ok(value) => value,
             Err(_) => {
-                self.respond_error(serde_json::Value::Null, -32700, None, "parse error");
+                self.respond_error(
+                    serde_json::Value::Null,
+                    -32700,
+                    None,
+                    "parse error",
+                    generation,
+                );
                 return;
             }
         };
         // Batch and envelope validation → -32600.
         if value.is_array() {
-            self.respond_error(serde_json::Value::Null, -32600, None, "batch not supported");
+            self.respond_error(
+                serde_json::Value::Null,
+                -32600,
+                None,
+                "batch not supported",
+                generation,
+            );
             return;
         }
         let Some(object) = value.as_object() else {
-            self.respond_error(serde_json::Value::Null, -32600, None, "invalid request");
+            self.respond_error(
+                serde_json::Value::Null,
+                -32600,
+                None,
+                "invalid request",
+                generation,
+            );
             return;
         };
         let version_ok = object
@@ -309,11 +386,18 @@ impl DebugTransport {
                 -32600,
                 None,
                 "invalid request",
+                generation,
             );
             return;
         }
         let Some(method) = method else {
-            self.respond_error(serde_json::Value::Null, -32600, None, "invalid request");
+            self.respond_error(
+                serde_json::Value::Null,
+                -32600,
+                None,
+                "invalid request",
+                generation,
+            );
             return;
         };
         let Some(id) = id else {
@@ -323,6 +407,7 @@ impl DebugTransport {
                 -32600,
                 None,
                 "notifications not supported",
+                generation,
             );
             return;
         };
@@ -331,12 +416,30 @@ impl DebugTransport {
         if let Some(key) = trackable_id(&id) {
             let mut active = self.active_ids.lock().expect("active ids lock");
             if active.contains(&key) {
-                self.respond_error(id, -32600, None, "duplicate active id");
+                drop(active);
+                self.respond_error(id, -32600, None, "duplicate active id", generation);
                 return;
             }
             active.push(key);
         }
-        self.push_request(WireRequest { id, method, params });
+        // Bounded inbox: a client flooding frames faster than the main
+        // thread dispatches gets `queue_full` instead of unbounded growth.
+        if self.inbox.lock().expect("inbox lock").len() >= MAX_INBOX_REQUESTS {
+            self.respond_error(
+                id,
+                -32000,
+                Some(DebugServerError::QueueFull.code_name()),
+                "transport inbox capacity reached",
+                generation,
+            );
+            return;
+        }
+        self.inbox.lock().expect("inbox lock").push(WireRequest {
+            id,
+            method,
+            params,
+            generation,
+        });
     }
 }
 
@@ -351,20 +454,24 @@ impl Plugin for DebugPlugin {
 
     fn build(&self, ctx: &mut AppCtx<'_>) -> Result<(), PluginError> {
         let socket_path = ctx.data_root().join("shiny-song-tools").join("debug.sock");
-        let runtime_gate = ctx.host.runtime_gate_reader();
+        let runtime_gate = ctx.runtime_gate_reader();
         let transport = DebugTransport::bind(socket_path, runtime_gate).map_err(PluginError::Io)?;
-        let topics = ctx.host.topic_registry_handle();
-        let introspection = ctx.host.introspection_handle();
+        let topics = ctx.debug_topic_registry();
+        let introspection = ctx.runtime_introspection();
 
-        let dispatch = DebugDispatchSystem {
+        // The dispatch system is registered through the ordinary public
+        // phase API as a closure over its state — no boxed-runner seam.
+        let mut dispatch = DebugDispatchSystem {
             transport,
             topics,
             introspection,
         };
-        ctx.host
-            .add_update_system_dyn(scsp_plugin_api::host::BoxedUpdateSystem::new(Box::new(
-                dispatch,
-            )));
+        ctx.add_update_system(
+            move |_ctx: scsp_plugin_api::UpdateCtx<'_>| -> scsp_plugin_api::SystemResult {
+                dispatch.run();
+                Ok(())
+            },
+        );
         tracing::info!(target: "debug", "DebugPlugin registered with UDS transport");
         Ok(())
     }
@@ -378,19 +485,18 @@ struct DebugDispatchSystem {
     introspection: Option<Arc<dyn DebugIntrospection>>,
 }
 
-impl scsp_plugin_api::host::UpdateSystemRunner for DebugDispatchSystem {
-    fn run(
-        &mut self,
-        _world: &mut bevy_ecs::world::World,
-        _main: &scsp_core::MainThreadToken,
-    ) -> scsp_plugin_api::SystemResult {
-        let requests: Vec<WireRequest> = self
-            .transport
-            .inbox
-            .lock()
-            .expect("inbox lock")
-            .drain(..)
-            .collect();
+impl DebugDispatchSystem {
+    fn run(&mut self) {
+        let current = self.transport.current_generation();
+        let requests: Vec<WireRequest> = {
+            let mut inbox = self.transport.inbox.lock().expect("inbox lock");
+            // Requests of replaced connections are dropped here: they were
+            // never enqueued into topics, so no pending accounting is owed.
+            inbox
+                .drain(..)
+                .filter(|request| request.generation == current)
+                .collect()
+        };
         let topic_views = self.topics.topics();
         for request in requests {
             // Built-in introspection topics first (main domain, world-free).
@@ -399,7 +505,8 @@ impl scsp_plugin_api::host::UpdateSystemRunner for DebugDispatchSystem {
                 .as_ref()
                 .and_then(|i| i.introspect(&request.method))
             {
-                self.transport.respond_ok(request.id, payload);
+                self.transport
+                    .respond_ok(request.id, payload, request.generation);
                 continue;
             }
             // Runtime gate: after a global failure, no new dispatch at all.
@@ -409,12 +516,18 @@ impl scsp_plugin_api::host::UpdateSystemRunner for DebugDispatchSystem {
                     -32000,
                     Some(DebugServerError::RuntimeUnavailable.code_name()),
                     "runtime unavailable",
+                    request.generation,
                 );
                 continue;
             }
             let Some(topic) = topic_views.iter().find(|view| view.name == request.method) else {
-                self.transport
-                    .respond_error(request.id, -32601, None, "method not found");
+                self.transport.respond_error(
+                    request.id,
+                    -32601,
+                    None,
+                    "method not found",
+                    request.generation,
+                );
                 continue;
             };
             if !topic.channel.dispatchable() {
@@ -423,6 +536,7 @@ impl scsp_plugin_api::host::UpdateSystemRunner for DebugDispatchSystem {
                     -32000,
                     Some(DebugServerError::PluginUnavailable.code_name()),
                     "plugin unavailable",
+                    request.generation,
                 );
                 continue;
             }
@@ -435,47 +549,60 @@ impl scsp_plugin_api::host::UpdateSystemRunner for DebugDispatchSystem {
                         -32602,
                         None,
                         &format!("invalid params: {message}"),
+                        request.generation,
                     );
                     continue;
                 }
             };
-            if topic.channel.enqueue(request.id.clone(), decoded).is_err() {
+            if topic
+                .channel
+                .enqueue(request.id.clone(), decoded, request.generation)
+                .is_err()
+            {
                 self.transport.respond_error(
                     request.id,
                     -32000,
                     Some(DebugServerError::QueueFull.code_name()),
                     "topic pending capacity reached",
+                    request.generation,
                 );
             }
         }
 
-        // Drain topic outboxes → wire.
+        // Drain topic outboxes → wire. Answers of replaced connections are
+        // dropped here: their session is gone.
         for topic in topic_views {
             let responses: Vec<DebugResponse> = {
                 let mut outbox = topic.channel.outbox.lock().expect("outbox lock");
                 outbox.drain(..).collect()
             };
             for response in responses {
+                if response.generation != current {
+                    continue;
+                }
                 match response.result {
-                    Ok(value) => self.transport.respond_ok(response.id, value),
+                    Ok(value) => self
+                        .transport
+                        .respond_ok(response.id, value, response.generation),
                     Err(err) => match err.code {
                         DebugWireErrorCode::ServerError(server) => self.transport.respond_error(
                             response.id,
                             -32000,
                             Some(server.code_name()),
                             &err.message,
+                            response.generation,
                         ),
                         other => self.transport.respond_error(
                             response.id,
                             map_wire_code(other),
                             None,
                             &err.message,
+                            response.generation,
                         ),
                     },
                 }
             }
         }
-        Ok(())
     }
 }
 

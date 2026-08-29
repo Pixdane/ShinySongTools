@@ -94,14 +94,16 @@ pub trait UpdateSystemRunner: Send {
 }
 
 /// A startup system ready for the driver, already lazy: its param state is
-/// created on first run (the driver's lazy-initialize rule).
+/// created on first run (the driver's lazy-initialize rule). Construction
+/// is crate-private: the only sanctioned paths are `AppCtx::add_*_system`,
+/// so external code cannot install raw runners with direct `World` access.
 pub struct BoxedStartupSystem(Box<dyn StartupSystemRunner>);
 
 /// An update system ready for the driver.
 pub struct BoxedUpdateSystem(Box<dyn UpdateSystemRunner>);
 
 impl BoxedStartupSystem {
-    pub fn new(runner: Box<dyn StartupSystemRunner>) -> Self {
+    pub(crate) fn new(runner: Box<dyn StartupSystemRunner>) -> Self {
         Self(runner)
     }
 
@@ -122,7 +124,7 @@ impl BoxedStartupSystem {
 }
 
 impl BoxedUpdateSystem {
-    pub fn new(runner: Box<dyn UpdateSystemRunner>) -> Self {
+    pub(crate) fn new(runner: Box<dyn UpdateSystemRunner>) -> Self {
         Self(runner)
     }
 
