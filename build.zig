@@ -44,8 +44,8 @@ pub fn build(b: *std.Build) void {
     //    (`debug.enabled`, fail-closed), so a disabled config behaves
     //    identically to a build without the feature.
     const cargo_run = b.addSystemCommand(&.{
-        "cargo",       "build",     "--release", "--target", "aarch64-apple-darwin",
-        "-p",          "shiny-song-tools",       "--features", "debug",
+        "cargo",      "build", "--release", "--target", "aarch64-apple-darwin",
+        "--features", "debug",
     });
     const staticlib = b.path("build/target/aarch64-apple-darwin/release/libshiny_song_tools.a");
 
@@ -53,13 +53,12 @@ pub fn build(b: *std.Build) void {
     //    SDKROOT pointing at a Nix Apple SDK that the host Apple Swift
     //    toolchain rejects; strip both (see the link step below).
     const link_run = b.addSystemCommand(&.{
-        "/usr/bin/xcrun",       "-sdk",      "macosx",
-        "swiftc",               "-O",        "-parse-as-library",
-        "-module-name",         "AKInterface",
-        "-target",              "arm64-apple-macos12.0",
-        "-emit-library",        "-Xlinker",  "-bundle",
-        "-framework",           "AppKit",
-        "-framework",           "Foundation",
+        "/usr/bin/xcrun",        "-sdk",          "macosx",
+        "swiftc",                "-O",            "-parse-as-library",
+        "-module-name",          "AKInterface",   "-target",
+        "arm64-apple-macos12.0", "-emit-library", "-Xlinker",
+        "-bundle",               "-framework",    "AppKit",
+        "-framework",            "Foundation",
     });
     link_run.addFileArg(b.path("third_party/PlayTools/Plugin.swift"));
     link_run.addFileArg(patched_akplugin);
@@ -87,7 +86,7 @@ pub fn build(b: *std.Build) void {
 
     // 5. Sign a fresh copy, then verify strictly. The upstream Zig-cache
     //    inputs are never signed in place.
-    const copy_run = b.addSystemCommand(&.{ "/usr/bin/ditto" });
+    const copy_run = b.addSystemCommand(&.{"/usr/bin/ditto"});
     copy_run.addDirectoryArg(unsigned_bundle);
     const signed_bundle = copy_run.addOutputDirectoryArg("AKInterface.bundle.signed");
 
