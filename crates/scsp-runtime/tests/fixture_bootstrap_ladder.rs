@@ -18,16 +18,14 @@ use scsp_core::{DataRoot, Il2CppApi, Il2CppError};
 use shiny_song_tools::bootstrap::{BootstrapDeps, SCHEDULER_TARGET, run_bootstrap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 fn deps(api: Arc<MockIl2Cpp>, resolver: Arc<MockResolver>) -> BootstrapDeps {
     BootstrapDeps {
         api,
         resolver,
         data_root: DataRoot::new(std::env::temp_dir().join("scsp-fixture-bootstrap")),
+        config: scsp_plugin_api::RuntimeConfig::default(),
         thread_check: Arc::new(|| true), // fixture thread stands in for main
-        image_poll_deadline: Duration::from_millis(200),
-        image_poll_backoff: Duration::from_millis(10),
     }
 }
 

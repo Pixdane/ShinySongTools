@@ -30,6 +30,8 @@ Debug Control Plane（DebugPlugin）
 | `tracing-os-layer` | 从 `scsp_start` 最早阶段可用的 Apple Unified Logging layer |
 | `crossbeam-queue` | callback/scheduler 热路径到 drain worker 的固定容量 compact event queue |
 
+v1 使用单一 os_log category `runtime`（`OsLogLayer` 在构造时绑定 category；scheduler/hook/debug 域通过 tracing `target` 字段区分）。per-category 句柄是需要 per-layer target 过滤的打磨项，不改变事件语义。
+
 runtime 在 `scsp_start` 的最外层 unwind boundary 内、解析 Documents path 与构造 App 之前创建进程期 ObservabilityRoot：持有 `tracing::Dispatch`、compact event queue 与专用 drain worker，保活到进程退出。v1 只写 Apple Unified Logging，固定 subsystem `com.shinysongtools.runtime`，category `runtime`、`plugin`、`hook`、`debug`；OS layer 初始化失败退化到 stderr fmt layer。drain worker 无法启动时记录一次普通启动事件，并把 `CallbackObservability` 置为只累计 dropped/unavailable counter 的 disabled producer。Observability 初始化、worker 或 sink 错误不得使游戏启动失败。日志读取由 Console.app 或 macOS `log` 工具完成，v1 不提供自有日志读取 API。
 
 注入 bundle 不假定自己拥有宿主进程的全局 tracing subscriber。runtime 不调用只能成功一次的 `set_global_default`，而是在每个自己控制的执行根使用同一个 scoped Dispatch：`scsp_start` body、bootstrap worker、外层 scheduler execution、plugin system 调用、drain worker。插件 system 在这些 scope 内直接使用普通 `tracing` macros。插件不允许建立长期独立 tick，因此不存在 Dispatch 继承问题。
@@ -64,6 +66,7 @@ Observability queue 与业务 route 可复用同一底层 bounded queue crate，
 - 唯一启用配置为 `scsp.toml` 的 `debug.enabled`（默认 `false`）。为 `true` 时 runtime 把 DebugPlugin 注册在生产插件列表**首位**；为 `false` 时不注册、不建 socket、无任何运行时成本。
 - DebugPlugin 的 build 在 worker 阶段创建 UDS listener 与 I/O worker（AnyThread 阶段允许），启动失败只使 Debug 不可用（I/O worker 记录 observability、后续 request 回 `runtime_unavailable`），不影响其它插件与游戏。transport 生命周期到进程退出为止：没有运行期停止协议；客户端感知的"服务消失"只有进程退出（连接关闭）。socket 残留由下次启动 build 时 unlink 前置清理。
 - 所有 debug route 的有效条件包含 RuntimeGate 与 owner PluginGate。总 gate 关闭后不再向任何 handler 投递新 request；已 pending 的统一回复 `runtime_unavailable`。owner 退役后其 topics 的 request 回复 `plugin_unavailable`。
+- 例外：内置自省 topic（`runtime.*`）由 DebugPlugin 自身应答，不经 gate 检查——bootstrap 与 Startup 阶段总 gate 仍关闭，自省在该窗口即可用；global failure 后 driver 停跑，dispatch system 不再执行，请求自然无人应答（连接行为不变）。
 
 ## Debug：wire 与 transport（JSON-RPC 2.0）
 
@@ -152,7 +155,7 @@ DebugPlugin 自带只读自省 topic（main 域），数据取自 `PluginInvento
 
 - `runtime.plugins` → 插件列表：id、state（`active` / `retired`）、gate 开关、startup/update system 数、restore action 数、是否有 container、注册的 topic 名单。
 - `runtime.gates` → RuntimeGate 与各 plugin gate 当前值。
-- `runtime.info` → 版本、uptime、帧计数、readiness 各阶梯结果、config 非敏感摘要、observability dropped 计数、各 route mailbox 深度。
+- `runtime.info` → 版本、uptime、帧计数、config 非敏感摘要（v1 即 `debug.enabled`）、observability dropped 计数、各 route mailbox 深度（readiness 各阶梯结果的字段集合待补，属"自省字段集合"打磨项）。
 
 自省只读、不触发任何迁移；失败原因等细节仍以 observability 事件为准（`retired` 不携带原因字段，归因看 Unified Logging）。
 

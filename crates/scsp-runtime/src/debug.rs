@@ -21,6 +21,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Frame size ceiling; oversize answers `payload_too_large` and keeps the
@@ -47,6 +48,20 @@ pub struct DebugTransport {
     /// The runtime gate reader: after a global failure, new requests answer
     /// `runtime_unavailable`.
     runtime_gate: scsp_core::GateReader,
+
+    /// Active (delivered, unanswered) request ids of the CURRENT connection,
+    /// serialized for comparison. Docs: 同一连接内 active `id` 必须唯一，
+    /// 重复回 `invalid_request`；response 写回后 id 可复用。 Cleared at
+    /// connection start; `id: null` is not trackable and never recorded.
+    active_ids: Mutex<Vec<String>>,
+}
+
+/// Serialized form of a trackable (non-null) request id; `None` for `null`.
+fn trackable_id(id: &serde_json::Value) -> Option<String> {
+    if id.is_null() {
+        return None;
+    }
+    serde_json::to_string(id).ok()
 }
 
 impl DebugTransport {
@@ -66,6 +81,7 @@ impl DebugTransport {
             inbox: Mutex::new(Vec::new()),
             outbox: Mutex::new(Vec::new()),
             runtime_gate,
+            active_ids: Mutex::new(Vec::new()),
         });
         let worker_transport = Arc::clone(&transport);
         std::thread::Builder::new()
@@ -124,12 +140,22 @@ impl DebugTransport {
 }
 
 /// I/O worker: single connection, framed reads, response writes.
+///
+/// Docs: v1 只接受一个客户端连接，已有连接时新连接直接关闭（不维护连接
+/// 集合）。 A connection arriving while one is being served is closed
+/// immediately instead of queueing in the accept backlog.
 fn io_worker(listener: UnixListener, transport: Arc<DebugTransport>) {
+    let busy = AtomicBool::new(false);
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {
+                if busy.swap(true, Ordering::AcqRel) {
+                    // Second client: drop the stream = close the connection.
+                    continue;
+                }
                 // Peer hangup or IO error: close and accept the next one.
                 let _ = handle_connection(&stream, &transport);
+                busy.store(false, Ordering::Release);
             }
             Err(_) => {
                 // Transient accept failure: back off and retry; the transport
@@ -142,6 +168,13 @@ fn io_worker(listener: UnixListener, transport: Arc<DebugTransport>) {
 
 fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_millis(20)))?;
+    // Fresh connection scope: id uniqueness applies per connection; a
+    // still-pending request of a previous connection does not block reuse.
+    transport
+        .active_ids
+        .lock()
+        .expect("active ids lock")
+        .clear();
     let mut length_buffer = [0u8; 4];
     let mut length_read = 0usize;
     let mut body: Vec<u8> = Vec::new();
@@ -152,6 +185,14 @@ fn handle_connection(stream: &UnixStream, transport: &DebugTransport) -> std::io
             outbox.drain(..).map(|response| response.body).collect()
         };
         for response_body in responses {
+            // Response written → the id becomes reusable on this connection.
+            if let Some(key) = response_body.get("id").and_then(trackable_id) {
+                transport
+                    .active_ids
+                    .lock()
+                    .expect("active ids lock")
+                    .retain(|active| *active != key);
+            }
             let frame = encode_frame(&response_body)?;
             (&*stream).write_all(&frame)?;
         }
@@ -285,6 +326,16 @@ impl DebugTransport {
             );
             return;
         };
+        // Same-connection active ids must be unique (docs: 重复回
+        // invalid_request，response 写回后 id 可复用).
+        if let Some(key) = trackable_id(&id) {
+            let mut active = self.active_ids.lock().expect("active ids lock");
+            if active.contains(&key) {
+                self.respond_error(id, -32600, None, "duplicate active id");
+                return;
+            }
+            active.push(key);
+        }
         self.push_request(WireRequest { id, method, params });
     }
 }

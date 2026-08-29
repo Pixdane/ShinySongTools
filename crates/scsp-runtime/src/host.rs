@@ -126,9 +126,15 @@ impl PluginHost for HostImpl<'_> {
         &mut self,
         registration: scsp_plugin_api::debug::DebugTopicRegistration,
     ) -> Result<(), PluginError> {
+        let domain = if registration.callback_domain {
+            crate::core_state::TopicDomain::Callback
+        } else {
+            crate::core_state::TopicDomain::Main
+        };
         let topic_id = self.app.core.topics.register(
             self.owner,
             registration.name,
+            domain,
             registration.channel,
             registration.decode,
         )?;

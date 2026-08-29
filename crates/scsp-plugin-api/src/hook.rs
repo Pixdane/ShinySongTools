@@ -165,6 +165,16 @@ impl<T: HookTarget, C: Send + Sync> HookSite<T, C> {
     ///    call, `fallback` produces the return value (the original is never
     ///    retried). If the handler returns normally without calling the
     ///    original, the exactly-once contract forces one passthrough call.
+    ///
+    /// # Panic contract (author-owned `extern "C"` boundary)
+    ///
+    /// The handler's panic is contained here, but the recovery paths call
+    /// `passthrough`/`fallback` OUTSIDE that containment: a panic raised by
+    /// the original call itself (or by the fallback) escapes `dispatch`. The
+    /// author's replacement wrapper is the `extern "C"` boundary and must
+    /// wrap the whole `dispatch` call in its own `catch_unwind` so no panic
+    /// ever crosses FFI — an unwind reaching `extern "C"` aborts the
+    /// process.
     pub fn dispatch<R>(
         &'static self,
         passthrough: impl FnOnce(T::Original) -> R,

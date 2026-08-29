@@ -113,6 +113,7 @@ impl App {
                 continue;
             }
             self.plugins.record_mut(owner).gate.close();
+            self.core.topics.fail_pending_requests(owner);
             loop {
                 let entry = self.plugins.record_mut(owner).inserted.pop();
                 let Some(entry) = entry else { break };
@@ -137,21 +138,7 @@ impl App {
     /// owner scope back (close gate → LIFO resource removal → reverse
     /// restore actions → Retired) and never affect other plugins.
     pub fn add_plugin<P: Plugin>(&mut self, plugin: P) {
-        let owner = self.plugins.begin_owner(plugin.name());
-        let result = {
-            let mut host = HostImpl { app: self, owner };
-            let mut ctx = AppCtx::new(&mut host);
-            plugin.build(&mut ctx)
-        };
-        match result {
-            Ok(()) => {
-                tracing::debug!(owner = owner.0, name = plugin.name(), "plugin build ok");
-                self.sync_inventory();
-            }
-            Err(err) => {
-                self.build_rollback(owner, &err);
-            }
-        }
+        self.add_plugin_dyn(Box::new(plugin));
     }
 
     /// Build-phase rollback: gate closed → LIFO resource removal → reverse
@@ -163,6 +150,7 @@ impl App {
             let record = self.plugins.record_mut(owner);
             record.gate.close();
         }
+        self.core.topics.fail_pending_requests(owner);
         // LIFO resource removal.
         loop {
             let entry = self.plugins.record_mut(owner).inserted.pop();
@@ -273,6 +261,7 @@ impl App {
             let record = self.plugins.record_mut(owner);
             record.gate.close();
         }
+        self.core.topics.fail_pending_requests(owner);
         loop {
             let entry = self.plugins.record_mut(owner).inserted.pop();
             let Some(entry) = entry else { break };
@@ -366,6 +355,7 @@ impl App {
             record.gate.close();
             record.state = PluginState::Retired;
         }
+        self.core.topics.fail_pending_requests(owner);
         loop {
             let action = self.plugins.record_mut(owner).effects.pop();
             let Some(action) = action else { break };

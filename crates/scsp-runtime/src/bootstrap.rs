@@ -1,7 +1,10 @@
 //! Bootstrap: readiness ladder, App construction, scheduler publication.
 //!
 //! Ladder (docs/runtime-crate.md):
-//!   1. image identity — the ONLY pollable step (bounded deadline);
+//!   1. image identity — the ONLY pollable step (bounded deadline): the
+//!      production poll lives in [`await_unity_framework`], which acquires
+//!      and keeps alive the exact handle before `run_bootstrap` verifies the
+//!      image identity in a single call;
 //!   2. exports — single shot, fail closed;
 //!   3. `domain_get` — the probe runs EXACTLY ONCE (no polling); null terminates
 //!      bootstrap without retry (experiment-validated);
@@ -17,13 +20,13 @@
 //! the un-handed-off App is dropped.
 
 use crate::app::App;
-use crate::config::load_config;
 use crate::scheduler::{
     SchedulerContext, SchedulerHook, ThreadIdentityCheck, install_hook, publish_context,
     scheduler_context,
 };
 use scsp_core::{
-    DataRoot, Il2CppApi, MethodPointerSlot, MethodRef, MethodResolver, RuntimeGate, TargetId,
+    DataRoot, ExactHandle, Il2CppApi, Il2CppError, MethodPointerSlot, MethodRef, MethodResolver,
+    RuntimeGate, TargetId,
 };
 use scsp_plugin_api::{Plugin, RuntimeConfig};
 use std::sync::Arc;
@@ -39,17 +42,22 @@ pub const SCHEDULER_TARGET: TargetId = TargetId {
     param_count: 0,
 };
 
+/// Production ladder-1 parameters (docs/runtime-crate.md: 具体总超时与
+/// backoff 属于实现参数，必须有界且可测试). Only ladder 1 may poll.
+pub const IMAGE_POLL_DEADLINE: Duration = Duration::from_secs(120);
+pub const IMAGE_POLL_BACKOFF: Duration = Duration::from_millis(250);
+
 /// Deps injected for testability; the production worker builds them from the
-/// real backend.
+/// real backend after ladder 1 acquired the exact handle.
 pub struct BootstrapDeps {
     pub api: Arc<dyn Il2CppApi>,
     pub resolver: Arc<dyn MethodResolver>,
     pub data_root: DataRoot,
+    /// Typed configuration parsed by `scsp_start` before the worker spawned
+    /// (docs/runtime-crate.md scsp_start sequence); fail-closed already
+    /// applied by `load_config`.
+    pub config: RuntimeConfig,
     pub thread_check: ThreadIdentityCheck,
-    /// Ladder 1 polling budget (production parameter, bounded).
-    pub image_poll_deadline: Duration,
-    /// Ladder 1 poll backoff (production parameter).
-    pub image_poll_backoff: Duration,
 }
 
 /// Production plugin list: DebugPlugin (feature-gated, config-gated) FIRST,
@@ -69,25 +77,45 @@ fn production_plugins(config: &RuntimeConfig) -> Vec<Box<dyn Plugin>> {
     list
 }
 
-/// Production dependency construction: exact UnityFramework image from dyld
-/// enumeration, the bridge-crate backend, and the pthread identity check.
-/// Returns `None` when no UnityFramework image is present yet (the ladder's
-/// polling lives inside `run_bootstrap`; a missing image at worker start
-/// simply means the ladder keeps polling).
-pub fn production_deps(data_root: &DataRoot) -> Option<BootstrapDeps> {
-    let image_path = scsp_core::enumerate_unity_framework()?;
-    // SAFETY: the path comes from the dynamic loader's own image table and
-    // refers to a live, already-loaded mach-o image.
-    let handle = unsafe { scsp_core::ExactHandle::open(&image_path) }.ok()?;
-    let backend = Arc::new(scsp_core::BridgeBackend::new(Arc::new(handle)));
-    Some(BootstrapDeps {
+/// Ladder 1 (the ONLY pollable rung, non-IL2CPP): poll the dyld image list
+/// until a UnityFramework image appears, then open and keep alive the exact
+/// handle. The bounded deadline terminates the one-shot bootstrap.
+///
+/// Identity matching beyond the file name is a bootstrap parameter (docs
+/// 待打磨项); the acquired handle's identity is verified once more through
+/// `BootstrapDeps.api.unity_framework_image` inside `run_bootstrap`.
+pub fn await_unity_framework(
+    deadline: Duration,
+    backoff: Duration,
+) -> Result<Arc<ExactHandle>, Il2CppError> {
+    let deadline_at = Instant::now() + deadline;
+    loop {
+        if let Some(path) = scsp_core::enumerate_unity_framework() {
+            // SAFETY: the path comes from the dynamic loader's own image
+            // table and refers to a live, already-loaded mach-o image.
+            return unsafe { ExactHandle::open(&path) }.map(Arc::new);
+        }
+        if Instant::now() >= deadline_at {
+            return Err(Il2CppError::ImageNotFound);
+        }
+        std::thread::sleep(backoff);
+    }
+}
+
+/// Production dependency construction over an already-acquired exact handle.
+pub fn production_deps(
+    handle: Arc<ExactHandle>,
+    data_root: &DataRoot,
+    config: RuntimeConfig,
+) -> BootstrapDeps {
+    let backend = Arc::new(scsp_core::BridgeBackend::new(handle));
+    BootstrapDeps {
         api: backend.clone(),
         resolver: backend,
         data_root: data_root.clone(),
+        config,
         thread_check: crate::scheduler::pthread_main_check(),
-        image_poll_deadline: Duration::from_secs(120),
-        image_poll_backoff: Duration::from_millis(250),
-    })
+    }
 }
 
 /// Run the one-shot bootstrap. Returns `true` when the App was published and
@@ -97,22 +125,17 @@ pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
     // path below can close it.
     let gate = RuntimeGate::new();
 
-    // Ladder 1 (only pollable step): image identity within a bounded
-    // deadline.
-    let deadline = Instant::now() + deps.image_poll_deadline;
-    loop {
-        match deps.api.unity_framework_image() {
-            Ok(image) => {
-                tracing::info!(target: "bootstrap", image = %image.name, "ladder 1: image found");
-                break;
-            }
-            Err(err) => {
-                if Instant::now() >= deadline {
-                    tracing::error!(target: "bootstrap", error = %err, "ladder 1: image deadline exceeded");
-                    return bootstrap_failed(&gate, None);
-                }
-                std::thread::sleep(deps.image_poll_backoff);
-            }
+    // Ladder 1 (single-shot verification): the exact handle was acquired by
+    // `await_unity_framework` — the bounded-deadline poll of the image list
+    // that production runs before this function. Verify the identity of the
+    // acquired image; no IL2CPP API beyond this query is touched here.
+    match deps.api.unity_framework_image() {
+        Ok(image) => {
+            tracing::info!(target: "bootstrap", image = %image.name, "ladder 1: image identity verified");
+        }
+        Err(err) => {
+            tracing::error!(target: "bootstrap", error = %err, "ladder 1: image identity failed");
+            return bootstrap_failed(&gate, None);
         }
     }
 
@@ -184,8 +207,9 @@ pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
 
     // App build (worker phase, thread-independent). Keep a gate clone: the
     // original moves into the scheduler context, and the failure paths below
-    // must still close the process gate.
-    let config = load_config(&deps.data_root);
+    // must still close the process gate. The config was parsed by scsp_start
+    // (fail-closed) and travels in deps.
+    let config = deps.config.clone();
     let mut app = App::new(config.clone(), deps.data_root.clone(), gate.reader());
     let gate_for_failures = gate.clone();
     app.set_method_resolver(Arc::clone(&deps.resolver));
@@ -205,8 +229,16 @@ pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
         main_thread_check: deps.thread_check,
     };
     if !publish_context(context) {
-        // A second bootstrap in one process is an invariant break.
-        tracing::error!(target: "bootstrap", "scheduler context already published");
+        // A second bootstrap in one process is an invariant break: the
+        // published context (and its gate) belongs to the first bootstrap.
+        // This attempt's gate was consumed by the refused context and never
+        // became the process gate — closing it would be meaningless. The
+        // freshly built App is unwound here so any hook that DID install on
+        // a not-yet-occupied target gets its slot restored before the App
+        // drops; `scsp_start`'s one-shot marker keeps production off this
+        // path.
+        tracing::error!(target: "bootstrap", "scheduler context already published; unwinding this attempt's App");
+        app.teardown_all();
         return false;
     }
     let context = scheduler_context().expect("just published");

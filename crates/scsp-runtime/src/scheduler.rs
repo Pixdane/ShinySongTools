@@ -110,7 +110,7 @@ unsafe extern "C" fn scheduler_replacement(
     method: *const MethodInfoOpaque,
 ) {
     if let Some(ctx) = SCHEDULER.get() {
-        ctx.run_frame();
+        ctx.run_frame(this, method);
     } else {
         // Construct invariant break: callback reachable without a published
         // context. Nothing safe to call (no captured original here); the
@@ -138,7 +138,11 @@ pub struct SchedulerContext {
 
 impl SchedulerContext {
     /// The replacement body: one full frame of the fixed callback order.
-    pub fn run_frame(&self) {
+    ///
+    /// `this`/`method` are the arguments the game passed to the replacement;
+    /// they are forwarded verbatim to the original (docs/runtime-crate.md:
+    /// replacement 把 this、method 原样传给 original).
+    pub fn run_frame(&self, this: *mut Il2CppObjectOpaque, method: *const MethodInfoOpaque) {
         // Scoped dispatch for this execution root (plugin systems inside use
         // normal tracing macros; the hot emits below go through the compact
         // queue regardless).
@@ -158,6 +162,8 @@ impl SchedulerContext {
             app: None,
             phase: OriginalPhase::BeforeOriginal,
             tls_committed: false,
+            this,
+            method,
         };
 
         let outcome = catch_unwind(AssertUnwindSafe(|| frame.execute()));
@@ -241,6 +247,10 @@ struct SchedulerFrame<'a> {
     app: Option<Box<App>>,
     phase: OriginalPhase,
     tls_committed: bool,
+    /// The game's own `this`/`method` arguments, forwarded verbatim to the
+    /// original exactly once.
+    this: *mut Il2CppObjectOpaque,
+    method: *const MethodInfoOpaque,
 }
 
 impl SchedulerFrame<'_> {
@@ -298,15 +308,15 @@ impl SchedulerFrame<'_> {
             // passed in step 2 for this frame.
             MainThreadToken::assume_main_thread()
         };
-        let mut startup_ok = true;
         if !app.startup_completed() {
-            let report = app.run_startup(&token);
-            startup_ok = report.retired.is_empty();
-            // First Startup driver fully completed and the App is still
-            // runnable: the runtime opens the RuntimeGate LAST.
-            if startup_ok {
-                self.context.runtime_gate.open();
-            }
+            let _report = app.run_startup(&token);
+            // First Startup driver completed and the App is still runnable:
+            // the runtime opens the RuntimeGate LAST. Individual plugin
+            // retirements are owner-local failures (runtime-crate.md: 单个
+            // 插件的 Startup/Update 失败不是 scheduler failure) and do not
+            // block the gate or the remaining plugins; only a frame-level
+            // unwind above reaches the global-failure path.
+            self.context.runtime_gate.open();
         } else {
             let _ = app.run_update(&token);
         }
@@ -314,9 +324,9 @@ impl SchedulerFrame<'_> {
         // 5. Call original while TLS stays Busy (App still on this stack).
         self.call_original_once();
 
-        // 6. Commit the App back: Exited on global failure or scheduler-level
-        //    startup fault, otherwise Running.
-        let exit = self.context.failed.load(Ordering::Acquire) || !startup_ok;
+        // 6. Commit the App back: Exited on global failure, otherwise
+        //    Running. Startup-phase plugin retirements do not exit the App.
+        let exit = self.context.failed.load(Ordering::Acquire);
         commit_tls(app, exit);
         self.tls_committed = true;
     }
@@ -364,10 +374,10 @@ impl SchedulerFrame<'_> {
             0,
         );
         // SAFETY: the original is the typed pointer captured from the slot
-        // at bind time; the replacement passes `this`/`method` through. The
-        // frame uses null stand-ins only where no game object is involved.
+        // at bind time; the replacement passes `this`/`method` through
+        // verbatim (docs/runtime-crate.md 目标专用 ABI).
         unsafe {
-            (self.context.hook.original)(core::ptr::null_mut(), core::ptr::null());
+            (self.context.hook.original)(self.this, self.method);
         }
         emit_compact(
             compact_codes::SCHED_ORIGINAL_RETURNED,

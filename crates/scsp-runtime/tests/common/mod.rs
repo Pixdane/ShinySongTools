@@ -215,21 +215,37 @@ impl Il2CppApi for MockIl2Cpp {
 // each other, and every scheduler frame runs on one thread.
 thread_local! {
     static ORIGINAL_CALLS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    static ORIGINAL_THIS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    static ORIGINAL_METHOD: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
 pub fn reset_original_calls() {
     ORIGINAL_CALLS.with(|c| c.set(0));
+    ORIGINAL_THIS.with(|c| c.set(0));
+    ORIGINAL_METHOD.with(|c| c.set(0));
 }
 
 pub fn original_calls() -> u32 {
     ORIGINAL_CALLS.with(|c| c.get())
 }
 
+/// `this` pointer the mock original last received (0 = never called).
+pub fn original_last_this() -> usize {
+    ORIGINAL_THIS.with(|c| c.get())
+}
+
+/// `method` pointer the mock original last received.
+pub fn original_last_method() -> usize {
+    ORIGINAL_METHOD.with(|c| c.get())
+}
+
 pub unsafe extern "C" fn mock_lateupdate(
-    _this: *mut shiny_song_tools::Il2CppObjectOpaque,
-    _method: *const shiny_song_tools::MethodInfoOpaque,
+    this: *mut shiny_song_tools::Il2CppObjectOpaque,
+    method: *const shiny_song_tools::MethodInfoOpaque,
 ) {
     ORIGINAL_CALLS.with(|c| c.set(c.get() + 1));
+    ORIGINAL_THIS.with(|c| c.set(this as usize));
+    ORIGINAL_METHOD.with(|c| c.set(method as usize));
 }
 
 /// Shared counting plugin: an Update system that runs once per frame.

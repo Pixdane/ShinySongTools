@@ -41,6 +41,7 @@ impl TopicRegistry {
         &self,
         owner: scsp_core::OwnerId,
         name: &'static str,
+        domain: TopicDomain,
         channel: Arc<DebugTopicChannel>,
         decode: DebugDecodeFn,
     ) -> Result<scsp_core::TopicId, scsp_core::PluginError> {
@@ -58,11 +59,46 @@ impl TopicRegistry {
             id,
             owner,
             name,
-            domain: TopicDomain::Main,
+            domain,
             channel,
             decode,
         });
         Ok(id)
+    }
+
+    /// Retire one owner's topics: every queued-but-undelivered request is
+    /// answered `plugin_unavailable` so wire clients never hang on a retired
+    /// plugin (docs/debug-diagnostics-logging.md 局部回滚). In-flight
+    /// requests already owned by handler/relay systems are not forcibly
+    /// cancelled; their systems stop running with the owner.
+    pub(crate) fn fail_pending_requests(&self, owner: scsp_core::OwnerId) {
+        use scsp_plugin_api::debug::{
+            DebugResponse, DebugServerError, DebugWireError, DebugWireErrorCode,
+        };
+        let entries = self.entries.read().expect("topics lock");
+        for entry in entries.iter().filter(|e| e.owner == owner) {
+            let queued: Vec<_> = entry
+                .channel
+                .inbox
+                .lock()
+                .expect("inbox lock")
+                .drain(..)
+                .collect();
+            if queued.is_empty() {
+                continue;
+            }
+            let mut outbox = entry.channel.outbox.lock().expect("outbox lock");
+            for request in queued {
+                outbox.push(DebugResponse {
+                    id: request.id,
+                    result: Err(DebugWireError {
+                        code: DebugWireErrorCode::ServerError(DebugServerError::PluginUnavailable),
+                        message: "plugin retired; request not delivered".to_owned(),
+                    }),
+                });
+                entry.channel.leave_pending();
+            }
+        }
     }
 }
 

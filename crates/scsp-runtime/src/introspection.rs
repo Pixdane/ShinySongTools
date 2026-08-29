@@ -121,9 +121,11 @@ impl DebugIntrospection for IntrospectionShared {
                 })).collect::<Vec<_>>(),
             })),
             "runtime.info" => Some(serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
                 "frames": self.frames.load(Ordering::Acquire),
                 "uptime_seconds": self.started_at.elapsed().as_secs(),
                 "debug_enabled": self.debug_enabled,
+                "observability_dropped": scsp_core::process_event_queue().dropped(),
                 "routes": data.routes.iter().map(|(payload, mailbox, depth)| serde_json::json!({
                     "payload": payload,
                     "mailbox": mailbox,

@@ -9,9 +9,11 @@
 //! * null pointer / empty path are rejected (recorded, no retry);
 //! * the C string is copied into Rust-owned data before returning — the
 //!   Swift-side `withCString` pointer is only valid for this call;
-//! * the (placeholder) bootstrap worker is started and the call returns
-//!   immediately; the bootstrap body lands in the same worker in the next
-//!   phase;
+//! * `DataRoot/scsp.toml` is parsed fail-closed BEFORE the worker spawns
+//!   (docs/runtime-crate.md scsp_start sequence) and travels into the worker;
+//! * the one-shot bootstrap worker runs the readiness ladder (ladder 1 polls
+//!   the image list within the bounded deadline in
+//!   `bootstrap::await_unity_framework`) and the call returns immediately;
 //! * the observability root lives in its own process `OnceLock`; duplicate
 //!   entries only reuse it to record an event.
 
@@ -69,6 +71,11 @@ fn entry(documents_path: *const c_char) {
             return;
         }
     };
+    // Parse `DataRoot/scsp.toml` before the worker spawns (docs
+    // runtime-crate.md scsp_start sequence). Fail-closed: missing/invalid
+    // falls back to defaults with debug forced off.
+    let data_root = scsp_core::DataRoot::new(owned);
+    let config = crate::config::load_config(&data_root);
     tracing::info!(target: "scsp_start", "documents path accepted; starting bootstrap worker");
 
     // The one-shot bootstrap worker: readiness ladder, App build, scheduler
@@ -79,11 +86,22 @@ fn entry(documents_path: *const c_char) {
         .name("scsp-bootstrap".to_owned())
         .spawn(move || {
             let _obs = crate::observability::scope();
-            let data_root = scsp_core::DataRoot::new(owned);
-            let deps = match crate::bootstrap::production_deps(&data_root) {
-                Some(deps) => deps,
-                None => return,
+            // Ladder 1 (the only pollable rung): wait for the UnityFramework
+            // image within the bounded deadline and keep the exact handle
+            // alive. A timeout is a logged one-shot bootstrap termination —
+            // never a silent exit.
+            let handle = match crate::bootstrap::await_unity_framework(
+                crate::bootstrap::IMAGE_POLL_DEADLINE,
+                crate::bootstrap::IMAGE_POLL_BACKOFF,
+            ) {
+                Ok(handle) => handle,
+                Err(err) => {
+                    tracing::error!(target: "bootstrap", error = %err, "ladder 1: image deadline exceeded; one-shot bootstrap terminated");
+                    return;
+                }
             };
+            let deps =
+                crate::bootstrap::production_deps(handle, &data_root, config);
             if crate::bootstrap::run_bootstrap(deps) {
                 tracing::info!(target: "scsp_start", "bootstrap published the App");
             } else {

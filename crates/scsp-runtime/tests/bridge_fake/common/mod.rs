@@ -7,7 +7,6 @@ use shiny_song_tools::scheduler::pthread_main_check;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Build (or reuse) the fake UnityFramework cdylib and return its path.
 /// Nested cargo inherits the workspace `.cargo/config.toml`, so the artifact
@@ -75,8 +74,8 @@ pub fn fake_handle(path: &Path) -> Arc<ExactHandle> {
     Arc::new(handle)
 }
 
-/// Production-shaped bootstrap deps over the fake image, with short ladder-1
-/// polling (the image exists before the deps are built).
+/// Production-shaped bootstrap deps over the fake image. The config is the
+/// fail-closed default, as `scsp_start` parses it for a missing scsp.toml.
 #[must_use]
 pub fn fake_deps(handle: &Arc<ExactHandle>) -> BootstrapDeps {
     let backend = Arc::new(BridgeBackend::new(Arc::clone(handle)));
@@ -84,9 +83,8 @@ pub fn fake_deps(handle: &Arc<ExactHandle>) -> BootstrapDeps {
         api: backend.clone(),
         resolver: backend,
         data_root: DataRoot::new(PathBuf::from("/tmp/scsp-fake-documents")),
+        config: scsp_plugin_api::RuntimeConfig::default(),
         thread_check: pthread_main_check(),
-        image_poll_deadline: Duration::from_secs(5),
-        image_poll_backoff: Duration::from_millis(10),
     }
 }
 

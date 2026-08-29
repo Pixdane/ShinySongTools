@@ -26,7 +26,7 @@ use bevy_ecs::system::{SystemParam, SystemState};
 use bevy_ecs::world::World;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -122,6 +122,11 @@ pub const DEBUG_MAX_PENDING: usize = 16;
 impl DebugTopicChannel {
     /// Queue a decoded request. `QueueFull` when the pending ceiling is
     /// reached.
+    ///
+    /// Single-producer by design: the only caller is the DebugPlugin's
+    /// dispatch system on the main thread, so the check-then-increment below
+    /// cannot interleave with another enqueue. Consumers only decrement
+    /// (`leave_pending`), never raise the counter.
     pub fn enqueue(
         &self,
         id: serde_json::Value,
@@ -163,6 +168,10 @@ pub struct DebugTopicRegistration {
     pub name: &'static str,
     pub channel: Arc<DebugTopicChannel>,
     pub decode: DebugDecodeFn,
+    /// `true` for callback-domain topics (handler runs on natural hook
+    /// entry through the container's shared slots), `false` for main-domain
+    /// topics (handler runs as an Update system).
+    pub callback_domain: bool,
 }
 
 /// One topic view handed to the DebugPlugin dispatch (type-erased).
@@ -233,6 +242,7 @@ impl AppCtx<'_> {
             name: T::NAME,
             channel: Arc::clone(&channel),
             decode,
+            callback_domain: false,
         })?;
 
         // The auto-registered handler system: lazily initialized by the
@@ -554,6 +564,7 @@ impl AppCtx<'_> {
             name: T::NAME,
             channel: Arc::clone(&channel),
             decode,
+            callback_domain: true,
         })?;
 
         let request = Arc::new(scsp_core::SharedSlot::new());
@@ -569,5 +580,3 @@ impl AppCtx<'_> {
         Ok(CallbackDebugEndpoints::new(request, response))
     }
 }
-
-const _: Option<TypeId> = None;

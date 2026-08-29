@@ -7,6 +7,7 @@
 
 use crate::app::App;
 use std::sync::Mutex;
+use std::sync::TryLockError;
 
 pub struct Handoff {
     app: Mutex<Option<Box<App>>>,
@@ -44,15 +45,18 @@ impl Handoff {
         true
     }
 
-    /// Callback side: never blocks longer than one mutex acquisition.
+    /// Callback side: never waits. The slot is only ever locked by the
+    /// worker's brief `publish`; a contended lock reports `Pending` (docs:
+    /// 槽空或 worker 暂时持锁 → Pending，不等待，本次 callback 只调
+    /// original，下一次重试).
     pub fn try_take(&self) -> HandoffTake {
-        let mut guard = match self.app.lock() {
-            Ok(guard) => guard,
-            Err(_) => return HandoffTake::Failed,
-        };
-        match guard.take() {
-            Some(app) => HandoffTake::Ready(app),
-            None => HandoffTake::Pending,
+        match self.app.try_lock() {
+            Ok(mut guard) => match guard.take() {
+                Some(app) => HandoffTake::Ready(app),
+                None => HandoffTake::Pending,
+            },
+            Err(TryLockError::WouldBlock) => HandoffTake::Pending,
+            Err(TryLockError::Poisoned(_)) => HandoffTake::Failed,
         }
     }
 }

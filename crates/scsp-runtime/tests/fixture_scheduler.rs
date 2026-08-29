@@ -5,7 +5,11 @@
 //! 4. BeforeOriginal panic：补调 original 恰好一次（经 PanicOnDrop 资源的
 //!    LIFO 回滚在 per-system catch 之外产生帧级 unwind），TLS 保持 Busy；
 //! 5. 错误线程：身份判据不匹配 → TLS Unavailable + global failure；
-//! 6. 首帧 Startup 顺序与 RuntimeGate 最后开启；TLS 五态断言。
+//! 6. 首帧 Startup 顺序与 RuntimeGate 最后开启；TLS 五态断言；
+//! 7. `this`/`method` 原样透传给 original（docs/runtime-crate.md 目标专用
+//!    ABI：replacement 把 this、method 原样传给 original）；
+//! 8. 单插件 Startup 退役是 owner-local：RuntimeGate 照常最后开启，其余
+//!    插件继续跑 Update，App 不进入 Exited。
 //!
 //! 注：Rust panic 在 `extern "C"` original 内会直接 abort（非 unwind），
 //! 因此 “original 调用中途崩溃” 的生产场景由 core 的 OriginalGuard 单测
@@ -14,12 +18,28 @@
 
 mod common;
 
-use common::{MockSlotMemory, original_calls, reset_original_calls};
+use common::{
+    MockSlotMemory, original_calls, original_last_method, original_last_this, reset_original_calls,
+};
 use scsp_core::{DataRoot, RuntimeGate, SlotMemory};
 use shiny_song_tools::scheduler::tls_snapshot;
-use shiny_song_tools::{App, Handoff, SchedulerContext, SchedulerHook};
+use shiny_song_tools::{
+    App, Handoff, Il2CppObjectOpaque, MethodInfoOpaque, SchedulerContext, SchedulerHook,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+
+/// Sentinel `this`/`method` stand-ins: every frame asserts the replacement
+/// chain forwards them verbatim to the original.
+const SENTINEL_THIS: usize = 0x5c5c_0001;
+const SENTINEL_METHOD: usize = 0x5c5c_0002;
+
+fn run_frame(ctx: &SchedulerContext) {
+    ctx.run_frame(
+        SENTINEL_THIS as *mut Il2CppObjectOpaque,
+        SENTINEL_METHOD as *const MethodInfoOpaque,
+    );
+}
 
 fn context_with(app: Option<App>, main_thread: bool) -> &'static SchedulerContext {
     reset_original_calls();
@@ -101,7 +121,7 @@ fn handoff_pending_retry_then_first_startup_opens_gate_last() {
     let ctx = context_with(None, true);
     on_fresh_thread(move || {
         // Frame 1: handoff empty → Pending → original only, TLS untouched.
-        ctx.run_frame();
+        run_frame(ctx);
         assert_eq!(original_calls(), 1);
         assert_eq!(tls_snapshot(), ("awaiting_handoff", None));
 
@@ -109,7 +129,7 @@ fn handoff_pending_retry_then_first_startup_opens_gate_last() {
         let (app, update_runs) = new_app(ctx, "scsp-fixture-sched-pending");
         assert!(ctx.handoff.publish(Box::new(app)));
 
-        ctx.run_frame();
+        run_frame(ctx);
         // First frame: Startup driver only — update has not run yet (checked
         // below); the gate opened LAST (after the startup driver completed).
         assert_eq!(tls_snapshot(), ("running", Some(true)));
@@ -121,7 +141,7 @@ fn handoff_pending_retry_then_first_startup_opens_gate_last() {
         );
 
         // Second frame: the fixed Update driver.
-        ctx.run_frame();
+        run_frame(ctx);
         assert_eq!(tls_snapshot(), ("running", Some(true)));
         assert_eq!(update_runs.load(Ordering::Acquire), 1);
     });
@@ -144,9 +164,9 @@ fn nested_callback_sees_busy_and_only_calls_original() {
         assert!(ctx.handoff.publish(Box::new(app)));
 
         let before = original_calls();
-        ctx.run_frame(); // startup frame
+        run_frame(ctx); // startup frame
         assert_eq!(update_runs.load(Ordering::Acquire), 0, "startup only");
-        ctx.run_frame(); // update frame: the update system re-enters
+        run_frame(ctx); // update frame: the update system re-enters
         assert_eq!(tls_snapshot(), ("running", Some(true)));
 
         // The nested frame saw Busy: it called original once more but did
@@ -182,7 +202,7 @@ fn reenter_from_update(_ctx: scsp_plugin_api::UpdateCtx<'_>) -> Result<(), scsp_
     let ctx = *NESTED_CTX.get().expect("nested context installed");
     // SAFETY: the fixture leaked the context for the test's lifetime.
     let ctx = unsafe { &*(ctx as *const SchedulerContext) };
-    ctx.run_frame();
+    run_frame(ctx);
     Ok(())
 }
 
@@ -196,7 +216,7 @@ fn failure_before_frame_puts_running_app_into_exited() {
     on_fresh_thread(move || {
         let (app, update_runs) = new_app(ctx, "scsp-fixture-sched-exited");
         assert!(ctx.handoff.publish(Box::new(app)));
-        ctx.run_frame();
+        run_frame(ctx);
         assert_eq!(tls_snapshot(), ("running", Some(true)));
         assert_eq!(
             update_runs.load(Ordering::Acquire),
@@ -206,7 +226,7 @@ fn failure_before_frame_puts_running_app_into_exited() {
 
         // Infrastructure-level global failure without a frame panic.
         ctx.publish_global_failure();
-        ctx.run_frame();
+        run_frame(ctx);
         assert_eq!(
             tls_snapshot(),
             ("exited", Some(true)),
@@ -272,7 +292,7 @@ fn before_original_panic_compensates_original_exactly_once() {
         app.add_plugin(PanicOnDropPlugin);
         assert!(ctx.handoff.publish(Box::new(app)));
 
-        ctx.run_frame();
+        run_frame(ctx);
         assert_eq!(
             original_calls(),
             1,
@@ -293,10 +313,88 @@ fn before_original_panic_compensates_original_exactly_once() {
 fn untrusted_thread_publishes_failure_and_marks_unavailable() {
     let untrusted = context_with(None, false);
     on_fresh_thread(move || {
-        untrusted.run_frame();
+        run_frame(untrusted);
         assert_eq!(tls_snapshot().0, "unavailable");
         assert!(untrusted.failed.load(Ordering::Acquire));
         assert!(!untrusted.runtime_gate.reader().is_open());
         assert_eq!(original_calls(), 1, "passthrough only");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 7. this/method 原样透传：replacement 收到的参数必须原样到达 original。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn frame_forwards_this_and_method_verbatim_to_original() {
+    let ctx = context_with(None, true);
+    on_fresh_thread(move || {
+        run_frame(ctx);
+        assert_eq!(original_calls(), 1);
+        assert_eq!(
+            original_last_this(),
+            SENTINEL_THIS,
+            "original received the frame's this pointer"
+        );
+        assert_eq!(
+            original_last_method(),
+            SENTINEL_METHOD,
+            "original received the frame's method pointer"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 8. 单插件 Startup 退役是 owner-local：gate 照开、其余插件继续。
+// ---------------------------------------------------------------------------
+
+struct FailingStartupPlugin;
+
+impl scsp_plugin_api::Plugin for FailingStartupPlugin {
+    fn name(&self) -> &'static str {
+        "failing-startup"
+    }
+
+    fn build(&self, ctx: &mut scsp_plugin_api::AppCtx<'_>) -> Result<(), scsp_core::PluginError> {
+        ctx.add_startup_system(failing_startup_system);
+        Ok(())
+    }
+}
+
+fn failing_startup_system(
+    _ctx: scsp_plugin_api::StartupCtx<'_>,
+) -> Result<(), scsp_core::PluginError> {
+    Err(scsp_core::PluginError::Message(
+        "owner-local startup failure",
+    ))
+}
+
+#[test]
+fn startup_retirement_is_owner_local_and_gate_still_opens() {
+    let ctx = context_with(None, true);
+    on_fresh_thread(move || {
+        let (mut app, update_runs) = new_app(ctx, "scsp-fixture-sched-local");
+        app.add_plugin(FailingStartupPlugin);
+        assert!(ctx.handoff.publish(Box::new(app)));
+
+        run_frame(ctx);
+        // The failing owner retired; the healthy owner's startup succeeded,
+        // the RuntimeGate opened LAST and the App stays Running.
+        assert!(
+            ctx.runtime_gate.reader().is_open(),
+            "gate opens despite a retired owner"
+        );
+        assert!(
+            !ctx.failed.load(Ordering::Acquire),
+            "owner-local failure is not scheduler failure"
+        );
+        assert_eq!(tls_snapshot(), ("running", Some(true)));
+
+        run_frame(ctx);
+        assert_eq!(
+            update_runs.load(Ordering::Acquire),
+            1,
+            "healthy plugin keeps running Update after another owner retired"
+        );
     });
 }
