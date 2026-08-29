@@ -190,6 +190,17 @@ impl<T: Send + Sync + 'static> SharedSlot<T> {
         let mut guard: MutexGuard<'_, Option<Arc<T>>> = lock(&self.slot)?;
         guard.take()
     }
+
+    /// Whether the slot currently holds a value. A contended lock reports
+    /// `true` (conservative: callers that must not overwrite treat busy as
+    /// occupied).
+    #[must_use]
+    pub fn is_set(&self) -> bool {
+        match self.slot.try_lock() {
+            Ok(guard) => guard.is_some(),
+            Err(_) => true,
+        }
+    }
 }
 
 impl<T: Send + Sync + 'static> Default for SharedSlot<T> {

@@ -44,8 +44,8 @@ pub fn build(b: *std.Build) void {
     const staticlib = b.path("build/target/aarch64-apple-darwin/release/libshiny_song_tools.a");
 
     // 3. Link the bundle executable. The devshell exports DEVELOPER_DIR /
-    //    SDKROOT pointing at an old Nix Apple SDK that the host Apple Swift
-    //    toolchain rejects; strip both so xcrun resolves the host Xcode SDK.
+    //    SDKROOT pointing at a Nix Apple SDK that the host Apple Swift
+    //    toolchain rejects; strip both (see the link step below).
     const link_run = b.addSystemCommand(&.{
         "/usr/bin/xcrun",       "-sdk",      "macosx",
         "swiftc",               "-O",        "-parse-as-library",
@@ -62,7 +62,9 @@ pub fn build(b: *std.Build) void {
     // Pin the host Xcode developer dir: the devshell exports DEVELOPER_DIR
     // / SDKROOT pointing at a Nix Apple SDK that the host Swift toolchain
     // cannot consume.
-    link_run.setEnvironmentVariable("DEVELOPER_DIR", HOST_DEVELOPER_DIR);
+    // Remove the devshell's Nix Apple SDK env entirely: xcrun then resolves
+    // the host toolchain via `xcode-select` (portable across machines).
+    link_run.removeEnvironmentVariable("DEVELOPER_DIR");
     link_run.removeEnvironmentVariable("SDKROOT");
     link_run.step.dependOn(&cargo_run.step);
     link_run.addArgs(&.{"-o"});
@@ -149,13 +151,13 @@ fn captureVersion(b: *std.Build, argv: []const []const u8) std.Build.LazyPath {
 }
 
 fn withoutNixAppleSdkEnv(run: *std.Build.Step.Run) void {
-    run.setEnvironmentVariable("DEVELOPER_DIR", HOST_DEVELOPER_DIR);
+    // Remove the devshell's Nix Apple SDK env; xcrun then resolves the host
+    // toolchain via `xcode-select` (portable across machines).
+    run.removeEnvironmentVariable("DEVELOPER_DIR");
     run.removeEnvironmentVariable("SDKROOT");
 }
 
-const HOST_DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer";
-
-/// SDK version of the HOST Xcode (the one the link step actually uses),
+/// SDK version of the host toolchain (the one the link step actually uses),
 /// not the devshell-exported Nix Apple SDK.
 fn captureHostSdkVersion(b: *std.Build) std.Build.LazyPath {
     const run = b.addSystemCommand(&.{ "/usr/bin/xcrun", "--show-sdk-version" });

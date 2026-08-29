@@ -11,8 +11,16 @@
 //! the topic channel; the owner's handler system (this module's auto system)
 //! drains the channel, calls the handler with its own `SystemParam`s, and
 //! writes encoded responses to the channel outbox; the DebugPlugin drains
-//! the outbox back to the wire. The callback domain (SharedSlot relay) is
-//! layered on the same channel type later.
+//! the outbox back to the wire.
+//!
+//! Dispatch flow (callback domain): the same channel carries wire↔owner
+//! traffic; the owner's auto-registered relay system forwards one queued
+//! request at a time into a `SharedSlot` inside the owner's
+//! `CallbackSiteContainer` (never overwriting an unconsumed request), the
+//! owner's hook callback handles it on natural entry via
+//! [`CallbackDebugEndpoints::handle_pending`] (one request per entry), and
+//! the relay picks the response up and pairs it FIFO with the delivered
+//! request ids.
 
 use bevy_ecs::system::{SystemParam, SystemState};
 use bevy_ecs::world::World;
@@ -25,6 +33,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::PluginError;
 use crate::context::AppCtx;
+use crate::hook::CallbackCtx;
 use crate::host::BoxedUpdateSystem;
 use crate::phase::{SystemResult, UpdateCtx};
 
@@ -354,5 +363,211 @@ impl_main_debug_handler!(P0);
 impl_main_debug_handler!(P0, P1);
 impl_main_debug_handler!(P0, P1, P2);
 impl_main_debug_handler!(P0, P1, P2, P3);
+
+// ---------------------------------------------------------------------------
+// callback domain: SharedSlot relay (docs: owner handler system → container
+// SharedSlot → callback natural entry → response back through the relay)
+// ---------------------------------------------------------------------------
+
+/// A typed callback-domain debug topic. The request/response travel through
+/// `SharedSlot`s inside the owner's `CallbackSiteContainer`; the owner's hook
+/// callback handles requests on natural entry (at most one per entry).
+pub trait CallbackDebugTopic: 'static {
+    /// Wire method name (e.g. `fps.probe`).
+    const NAME: &'static str;
+    type Request: DeserializeOwned + Send + Sync + 'static;
+    type Response: Serialize + Send + Sync + 'static;
+}
+
+/// Callback-side endpoints for one callback-domain topic. Put these into the
+/// plugin's `CallbackSiteContainer`; the hook handler processes pending
+/// requests on natural entry. `Send + Sync + 'static` so the container stays
+/// process-live.
+pub struct CallbackDebugEndpoints<Req, Res> {
+    request: Arc<scsp_core::SharedSlot<Req>>,
+    response: Arc<scsp_core::SharedSlot<Result<Res, DebugHandlerError>>>,
+}
+
+impl<Req, Res> Clone for CallbackDebugEndpoints<Req, Res> {
+    fn clone(&self) -> Self {
+        Self {
+            request: Arc::clone(&self.request),
+            response: Arc::clone(&self.response),
+        }
+    }
+}
+
+impl<Req, Res> CallbackDebugEndpoints<Req, Res>
+where
+    Req: Send + Sync + 'static,
+    Res: Send + Sync + 'static,
+{
+    pub(crate) fn new(
+        request: Arc<scsp_core::SharedSlot<Req>>,
+        response: Arc<scsp_core::SharedSlot<Result<Res, DebugHandlerError>>>,
+    ) -> Self {
+        Self { request, response }
+    }
+
+    /// Callback side: handle at most one pending request per hook entry.
+    /// Returns `true` when a request was handled. Never blocks; the handler
+    /// runs on the hook's own thread with bounded work only.
+    pub fn handle_pending(
+        &self,
+        _ctx: &CallbackCtx,
+        handler: impl FnOnce(Req) -> Result<Res, DebugHandlerError>,
+    ) -> bool {
+        let Some(request) = self.request.take() else {
+            return false;
+        };
+        // Sole ownership by construction: the relay moved the only Arc into
+        // the slot. A stray extra reference is re-queued and retried on the
+        // next entry instead of being dropped.
+        let request = match Arc::try_unwrap(request) {
+            Ok(value) => value,
+            // Stray extra reference: re-queue and retry on the next entry.
+            Err(arc) => {
+                let _ = self.request.try_send(arc);
+                return false;
+            }
+        };
+        let outcome = handler(request);
+        // The response slot is single-flight by construction (the relay
+        // delivers one request at a time); a contended lock drops the
+        // response, which the wire side eventually reports via pending
+        // accounting — the callback itself must never block.
+        let _ = self.response.try_send(Arc::new(outcome));
+        true
+    }
+}
+
+/// Owner-side relay system (auto-registered by `register_callback_debug`):
+/// channel inbox → request slot (one per frame, no overwrite) and response
+/// slot → channel outbox with FIFO id pairing.
+pub(crate) struct CallbackRelaySystem<T: CallbackDebugTopic> {
+    channel: Arc<DebugTopicChannel>,
+    request_slot: Arc<scsp_core::SharedSlot<T::Request>>,
+    response_slot: Arc<scsp_core::SharedSlot<Result<T::Response, DebugHandlerError>>>,
+    /// Delivered-but-unanswered request ids, FIFO.
+    in_flight: std::collections::VecDeque<serde_json::Value>,
+}
+
+impl<T: CallbackDebugTopic> crate::host::UpdateSystemRunner for CallbackRelaySystem<T> {
+    fn run(&mut self, _world: &mut World, _main: &crate::MainThreadToken) -> SystemResult {
+        // 1. Deliver one queued request when the slot is free (no overwrite
+        //    of an unconsumed request — docs: 新 request 不覆盖旧 request).
+        if !self.request_slot.is_set() {
+            let mut inbox = self.channel.inbox.lock().expect("inbox lock");
+            if let Some(queued) = inbox.front() {
+                match queued.payload.clone().downcast::<T::Request>() {
+                    Ok(typed) => {
+                        if self.request_slot.try_send(typed).is_ok() {
+                            let queued = inbox.pop_front().expect("front checked above");
+                            self.in_flight.push_back(queued.id);
+                        }
+                    }
+                    Err(_) => {
+                        let queued = inbox.pop_front().expect("front checked above");
+                        let mut outbox = self.channel.outbox.lock().expect("outbox lock");
+                        outbox.push(DebugResponse {
+                            id: queued.id,
+                            result: Err(DebugWireError {
+                                code: DebugWireErrorCode::ServerError(
+                                    DebugServerError::InternalError,
+                                ),
+                                message: "queued request type mismatch".to_owned(),
+                            }),
+                        });
+                        self.channel.leave_pending();
+                    }
+                }
+            }
+        }
+
+        // 2. Collect responses; FIFO pairing with the delivered ids.
+        while let Some(response) = self.response_slot.take() {
+            let Some(id) = self.in_flight.pop_front() else {
+                // A response without a delivered request cannot be
+                // correlated: drop it (no id to report).
+                break;
+            };
+            // Sole ownership by construction (single-flight relay); a stray
+            // extra reference goes back into the slot for the next frame.
+            let outcome = match Arc::try_unwrap(response) {
+                Ok(value) => value,
+                Err(arc) => {
+                    let _ = self.response_slot.try_send(arc);
+                    break;
+                }
+            };
+            let result = match outcome {
+                Ok(value) => serde_json::to_value(&value).map_err(|e| DebugWireError {
+                    code: DebugWireErrorCode::ServerError(DebugServerError::InternalError),
+                    message: e.to_string(),
+                }),
+                Err(DebugHandlerError(message)) => Err(DebugWireError {
+                    code: DebugWireErrorCode::ServerError(DebugServerError::HandlerError),
+                    message,
+                }),
+            };
+            let mut outbox = self.channel.outbox.lock().expect("outbox lock");
+            outbox.push(DebugResponse { id, result });
+            self.channel.leave_pending();
+        }
+        Ok(())
+    }
+}
+
+impl AppCtx<'_> {
+    /// Register a callback-domain debug topic.
+    ///
+    /// Auto-wires: the registry entry (same channel plumbing as the main
+    /// domain) and this topic's relay system as an ordinary Update system of
+    /// this plugin. Returns the callback-side endpoints — put them into this
+    /// plugin's `CallbackSiteContainer` and call
+    /// [`CallbackDebugEndpoints::handle_pending`] from the hook handler. The
+    /// callback handler runs when the corresponding hook naturally enters;
+    /// until then the request stays pending (bounded, no overwrite).
+    pub fn register_callback_debug<T>(
+        &mut self,
+    ) -> Result<CallbackDebugEndpoints<T::Request, T::Response>, PluginError>
+    where
+        T: CallbackDebugTopic,
+    {
+        let channel = Arc::new(DebugTopicChannel {
+            inbox: Mutex::new(VecDeque::new()),
+            outbox: Mutex::new(Vec::new()),
+            pending: AtomicUsize::new(0),
+            owner_gate: self.host.owner_gate_reader(),
+            runtime_gate: self.host.runtime_gate_reader(),
+        });
+        let decode: DebugDecodeFn = Arc::new(|params: &serde_json::Value| {
+            serde_json::from_value::<T::Request>(params.clone())
+                .map(|request| {
+                    let boxed: Arc<dyn Any + Send + Sync> = Arc::new(request);
+                    boxed
+                })
+                .map_err(|e| e.to_string())
+        });
+
+        self.host.register_debug_topic_dyn(DebugTopicRegistration {
+            name: T::NAME,
+            channel: Arc::clone(&channel),
+            decode,
+        })?;
+
+        let request = Arc::new(scsp_core::SharedSlot::new());
+        let response = Arc::new(scsp_core::SharedSlot::new());
+        let relay = CallbackRelaySystem::<T> {
+            channel,
+            request_slot: Arc::clone(&request),
+            response_slot: Arc::clone(&response),
+            in_flight: std::collections::VecDeque::new(),
+        };
+        self.host
+            .add_update_system_dyn(BoxedUpdateSystem::new(Box::new(relay)));
+        Ok(CallbackDebugEndpoints::new(request, response))
+    }
+}
 
 const _: Option<TypeId> = None;
