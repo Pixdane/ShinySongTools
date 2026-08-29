@@ -2,7 +2,7 @@
 //! the bridge crate's symbol cache and metadata cache are process-global).
 
 use scsp_core::{BridgeBackend, DataRoot, ExactHandle};
-use shiny_song_tools::bootstrap::BootstrapDeps;
+use shiny_song_tools::bootstrap::{BootstrapDeps, CriWareUnityReadiness};
 use shiny_song_tools::scheduler::pthread_main_check;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -81,6 +81,7 @@ pub fn fake_deps(handle: &Arc<ExactHandle>) -> BootstrapDeps {
     let backend = Arc::new(BridgeBackend::new(Arc::clone(handle)));
     BootstrapDeps {
         api: backend.clone(),
+        readiness: Arc::new(CriWareUnityReadiness::new(Arc::clone(handle))),
         resolver: backend,
         data_root: DataRoot::new(PathBuf::from("/tmp/scsp-fake-documents")),
         config: scsp_plugin_api::RuntimeConfig::default(),
@@ -106,6 +107,14 @@ pub fn domain_get_count(handle: &ExactHandle) -> usize {
 
 /// Attachments the fake runtime has detached so far.
 #[must_use]
+#[allow(dead_code)]
 pub fn detach_count(handle: &ExactHandle) -> usize {
     counter(handle, "scsp_fixture_detach_count")
+}
+
+/// Calls made through the production CRIWARE readiness export.
+#[must_use]
+#[allow(dead_code)]
+pub fn criware_ready_count(handle: &ExactHandle) -> usize {
+    counter(handle, "scsp_fixture_criware_ready_count")
 }

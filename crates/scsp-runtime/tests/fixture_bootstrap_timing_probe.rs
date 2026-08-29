@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{MockIl2Cpp, MockResolver};
+use common::{MockIl2Cpp, MockReadiness, MockResolver};
 use scsp_core::DataRoot;
 use shiny_song_tools::bootstrap::{BootstrapDeps, run_bootstrap_timing_probe_with_delay};
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use std::time::Duration;
 fn deps(api: Arc<MockIl2Cpp>) -> BootstrapDeps {
     BootstrapDeps {
         api,
+        readiness: Arc::new(MockReadiness::new()),
         resolver: Arc::new(MockResolver::new()),
         data_root: DataRoot::new(std::env::temp_dir().join("scsp-bootstrap-timing-probe")),
         config: scsp_plugin_api::RuntimeConfig::default(),

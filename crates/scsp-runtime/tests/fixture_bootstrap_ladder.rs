@@ -13,15 +13,27 @@
 
 mod common;
 
-use common::{MockIl2Cpp, MockResolver};
+use common::{MockIl2Cpp, MockReadiness, MockResolver};
 use scsp_core::{DataRoot, Il2CppApi, Il2CppError};
-use shiny_song_tools::bootstrap::{BootstrapDeps, SCHEDULER_TARGET, run_bootstrap};
+use shiny_song_tools::bootstrap::{
+    BootstrapDeps, SCHEDULER_TARGET, run_bootstrap, run_bootstrap_with_readiness_wait,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 fn deps(api: Arc<MockIl2Cpp>, resolver: Arc<MockResolver>) -> BootstrapDeps {
+    deps_with_readiness(api, resolver, Arc::new(MockReadiness::new()))
+}
+
+fn deps_with_readiness(
+    api: Arc<MockIl2Cpp>,
+    resolver: Arc<MockResolver>,
+    readiness: Arc<MockReadiness>,
+) -> BootstrapDeps {
     BootstrapDeps {
         api,
+        readiness,
         resolver,
         data_root: DataRoot::new(std::env::temp_dir().join("scsp-fixture-bootstrap")),
         config: scsp_plugin_api::RuntimeConfig::default(),
@@ -46,10 +58,21 @@ fn bootstrap_success_calls_domain_get_exactly_once_and_publishes() {
         .expect("once per process");
     SLOT.set(Arc::clone(&slot)).expect("once per process");
     let api = Arc::new(MockIl2Cpp::new());
+    let readiness = Arc::new(MockReadiness::ready_after(3));
 
     assert!(
-        run_bootstrap(deps(api.clone(), resolver)),
+        run_bootstrap(deps_with_readiness(
+            api.clone(),
+            resolver,
+            readiness.clone(),
+        )),
         "bootstrap published"
+    );
+
+    assert_eq!(
+        readiness.calls.load(Ordering::Acquire),
+        3,
+        "only the non-IL2CPP readiness predicate is polled"
     );
 
     assert_eq!(
@@ -72,6 +95,42 @@ fn bootstrap_success_calls_domain_get_exactly_once_and_publishes() {
     ));
     assert!(!ctx.runtime_gate.reader().is_open());
     assert!(!ctx.failed.load(Ordering::Acquire));
+}
+
+#[test]
+fn bootstrap_readiness_timeout_never_touches_domain_get() {
+    let api = Arc::new(MockIl2Cpp::new());
+    let readiness = Arc::new(MockReadiness::ready_after(u32::MAX));
+    let (resolver, _slot) = resolver_with_target();
+
+    assert!(!run_bootstrap_with_readiness_wait(
+        deps_with_readiness(api.clone(), resolver, readiness.clone()),
+        Duration::ZERO,
+        Duration::ZERO,
+    ));
+    assert_eq!(readiness.calls.load(Ordering::Acquire), 1);
+    assert_eq!(
+        api.domain_get_calls.load(Ordering::Acquire),
+        0,
+        "deadline expiry must happen before the dangerous IL2CPP probe"
+    );
+}
+
+#[test]
+fn bootstrap_readiness_symbol_drift_never_touches_domain_get() {
+    let api = Arc::new(MockIl2Cpp::new());
+    let readiness = Arc::new(MockReadiness {
+        symbol_missing: true,
+        ..MockReadiness::new()
+    });
+    let (resolver, _slot) = resolver_with_target();
+
+    assert!(!run_bootstrap(deps_with_readiness(
+        api.clone(),
+        resolver,
+        readiness,
+    )));
+    assert_eq!(api.domain_get_calls.load(Ordering::Acquire), 0);
 }
 
 #[test]

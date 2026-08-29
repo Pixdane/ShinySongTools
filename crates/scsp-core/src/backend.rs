@@ -7,9 +7,9 @@
 //! protocol with mocks.
 //!
 //! Readiness ladder ownership (see the runtime bootstrap document):
-//! ladder 1 image identity is polled by the caller; ladders 2-5 are
-//! single-shot and fail closed. In particular `domain_get` is called exactly
-//! once across the whole bootstrap.
+//! image identity and the non-IL2CPP CRIWARE completion predicate are polled
+//! by the caller; the IL2CPP rungs are single-shot and fail closed. In
+//! particular `domain_get` is called exactly once by the bootstrap itself.
 
 use crate::error::{HookError, Il2CppError};
 use crate::method_slot::{MethodRef, SlotMemory, TargetId};
@@ -83,15 +83,15 @@ pub trait Il2CppApi: Send + Sync + 'static {
     fn unity_framework_image(&self) -> Result<ImageIdentity, Il2CppError>;
     /// Ladder 2 (single shot): load all required exports from the exact handle.
     fn load_exports(&self) -> Result<(), Il2CppError>;
-    /// Ladder 3 (exactly once per process): fetch the il2cpp domain.
+    /// Ladder 4 (exactly once per process): fetch the il2cpp domain.
     fn domain_get(&self) -> Result<DomainHandle, Il2CppError>;
-    /// Ladder 4: attach the current thread; the guard detaches only this
+    /// Ladder 5: attach the current thread; the guard detaches only this
     /// attachment.
     fn attach_current_thread(&self) -> Result<AttachGuard, Il2CppError>;
-    /// Ladder 4 (after attach): hydrate the metadata cache for target
+    /// Ladder 5 (after attach): hydrate the metadata cache for target
     /// resolution. Expensive; runs on the bootstrap worker.
     fn hydrate_metadata(&self) -> Result<(), Il2CppError>;
-    /// Ladder 5 (single shot): validate the supported runtime/layout identity.
+    /// Ladder 6 (single shot): validate the supported runtime/layout identity.
     fn runtime_identity(&self) -> Result<RuntimeIdentity, Il2CppError>;
 }
 

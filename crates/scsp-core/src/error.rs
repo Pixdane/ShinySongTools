@@ -65,6 +65,10 @@ pub enum Il2CppError {
     ImageIdentityMismatch,
     #[error("required IL2CPP export missing: {0}")]
     ExportMissing(&'static str),
+    #[error("required bootstrap readiness symbol missing: {0}")]
+    ReadinessSymbolMissing(&'static str),
+    #[error("bootstrap readiness deadline exceeded")]
+    ReadinessDeadlineExceeded,
     #[error("il2cpp_domain_get returned null; one-shot bootstrap terminated")]
     DomainUnavailable,
     #[error("thread attach to the IL2CPP domain failed")]

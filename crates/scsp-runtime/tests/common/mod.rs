@@ -114,7 +114,50 @@ pub fn fixture_main_token() -> MainThreadToken {
 use scsp_core::{
     AttachGuard, DomainHandle, Il2CppApi, Il2CppError, ImageHandle, ImageIdentity, RuntimeIdentity,
 };
+use shiny_song_tools::bootstrap::BootstrapReadiness;
 use std::sync::atomic::AtomicU32;
+
+/// Mock non-IL2CPP readiness predicate. `ready_after` is one-based: `1`
+/// means immediately ready; `u32::MAX` is a practical never-ready fixture.
+#[derive(Debug)]
+pub struct MockReadiness {
+    pub calls: AtomicU32,
+    pub ready_after: u32,
+    pub symbol_missing: bool,
+}
+
+impl MockReadiness {
+    pub fn new() -> Self {
+        Self {
+            calls: AtomicU32::new(0),
+            ready_after: 1,
+            symbol_missing: false,
+        }
+    }
+
+    pub fn ready_after(calls: u32) -> Self {
+        Self {
+            ready_after: calls,
+            ..Self::new()
+        }
+    }
+}
+
+impl Default for MockReadiness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BootstrapReadiness for MockReadiness {
+    fn is_ready(&self) -> Result<bool, Il2CppError> {
+        if self.symbol_missing {
+            return Err(Il2CppError::ReadinessSymbolMissing("mock-readiness"));
+        }
+        let call = self.calls.fetch_add(1, Ordering::AcqRel) + 1;
+        Ok(call >= self.ready_after)
+    }
+}
 
 /// Mock backend driving the readiness ladder. Enforces ladder order: any
 /// call beyond the reached rung returns `NotReady`. Counts `domain_get`

@@ -16,14 +16,20 @@ fn full_ladder_publishes_and_uses_the_validated_domain_pattern() {
     // The scheduler hook is installed against the fake slot.
     assert!(shiny_song_tools::scheduler::scheduler_context().is_some());
 
-    // Real il2cpp_domain_get calls: exactly ONE bootstrap probe (ladder 3)
+    assert_eq!(
+        common::criware_ready_count(&handle),
+        1,
+        "production readiness resolved and called the CRIWARE export"
+    );
+
+    // Real il2cpp_domain_get calls: exactly ONE bootstrap probe (ladder 4)
     // plus ONE inside the bridge crate's cache hydration — the experiment
     // rule forbids pre-init POLLING, not post-gate internal re-reads (see
     // docs/runtime-architecture.md readiness invariant).
     assert_eq!(
         common::domain_get_count(&handle),
         2,
-        "one ladder-3 probe + one cache-internal re-read"
+        "one ladder-4 probe + one cache-internal re-read"
     );
 
     // The worker's own attachment is detached exactly once (RAII guard).

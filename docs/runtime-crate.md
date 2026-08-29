@@ -53,12 +53,14 @@ bootstrap worker
     唯一且身份匹配的 UnityFramework；取得并保活 exact handle
   → 阶梯 2（单次）：在该 exact handle 上一次性加载全部所需 IL2CPP exports；
     缺失即失败，不回退 RTLD_DEFAULT
-  → 阶梯 3（探测恰好一次）：调用 il2cpp_domain_get()；
+  → 阶梯 3（可轮询，非 IL2CPP 操作）：在同一 exact handle 上调用经版本审计的
+    `CRIWARE2813B966` 完成谓词；有界超时或符号缺失即 fail-closed，绝不触碰 IL2CPP
+  → 阶梯 4（探测恰好一次）：调用 il2cpp_domain_get()；
     返回 null 即本次一次性 bootstrap 终止——不轮询、不重试（实验定案；
-    阶梯 4 的 cache hydration 内部会重读一次 domain，实证无害，见 core-crate 分册）
-  → 阶梯 4（单次）：worker attach 到该 domain（RAII detach guard，只 detach 本次建立的
+    阶梯 5 的 cache hydration 内部会重读一次 domain，实证无害，见 core-crate 分册）
+  → 阶梯 5（单次）：worker attach 到该 domain（RAII detach guard，只 detach 本次建立的
     attachment）；等待/执行 scheduler 所需 assembly/image/metadata 解析与目标校验
-  → 阶梯 5：校验 runtime/layout 身份属于生产实现明确支持的集合
+  → 阶梯 6：校验 runtime/layout 身份属于生产实现明确支持的集合
   → 构造 core IL2CPP backend 与基础设施 handles
   → 构造初始关闭的 RuntimeGate
   → App::new（注入 RuntimeConfig 与 RuntimeGateReader）
@@ -86,7 +88,7 @@ bootstrap worker
 ## readiness 阶梯要点
 
 - 阶梯间有严格先后：前一步未满足不得调用依赖后一步的 API。
-- 只有阶梯 1（image 出现）允许轮询等待；阶梯 2–5 都是单次尝试、fail-closed。cache hydration 等阻塞调用在 attach 之后执行（实验实测约 6 秒量级），属于 bootstrap worker 内的正常工作。
+- 阶梯 1（image 出现）和阶梯 3（CRIWARE 完成谓词）允许有界轮询等待；阶梯 2、4–6 都是单次尝试、fail-closed。cache hydration 等阻塞调用在 attach 之后执行（实验实测约 6 秒量级），属于 bootstrap worker 内的正常工作。
 - readiness 只证明可以安全开始 build。scheduler 目标缺失使整个 bootstrap 失败；功能插件目标缺失只退役该插件。
 - worker 只对本次调用建立的 attachment 创建 RAII detach guard；不得 detach 外部已建立的 attachment。exact handle 与 API table 转移进 `Il2CppBackend` 按其生命周期保活。
 

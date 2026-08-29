@@ -1,15 +1,16 @@
 //! Bootstrap: readiness ladder, App construction, scheduler publication.
 //!
 //! Ladder (docs/runtime-crate.md):
-//!   1. image identity — the ONLY pollable step (bounded deadline): the
+//!   1. image identity — pollable, non-IL2CPP (bounded deadline): the
 //!      production poll lives in [`await_unity_framework`], which acquires
 //!      and keeps alive the exact handle before `run_bootstrap` verifies the
 //!      image identity in a single call;
 //!   2. exports — single shot, fail closed;
-//!   3. `domain_get` — the probe runs EXACTLY ONCE (no polling); null terminates
+//!   3. CRIWARE Unity completion — pollable, non-IL2CPP (bounded deadline);
+//!   4. `domain_get` — the probe runs EXACTLY ONCE (no polling); null terminates
 //!      bootstrap without retry (experiment-validated);
-//!   4. attach (RAII detach of this attachment only) + metadata hydration;
-//!   5. runtime/layout identity;
+//!   5. attach (RAII detach of this attachment only) + metadata hydration;
+//!   6. runtime/layout identity;
 //!
 //!   then: scheduler target resolution, App build with the production plugin
 //!   list (DebugPlugin first when enabled), SchedulerContext publication,
@@ -30,6 +31,7 @@ use scsp_core::{
 };
 use scsp_plugin_api::{Plugin, RuntimeConfig};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -43,9 +45,21 @@ pub const SCHEDULER_TARGET: TargetId = TargetId {
 };
 
 /// Production ladder-1 parameters (docs/runtime-crate.md: 具体总超时与
-/// backoff 属于实现参数，必须有界且可测试). Only ladder 1 may poll.
+/// backoff 属于实现参数，必须有界且可测试).
 pub const IMAGE_POLL_DEADLINE: Duration = Duration::from_secs(120);
 pub const IMAGE_POLL_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Current CRIWARE Unity ABI symbol that returns the top-level Atom Unity
+/// initialization-complete flag. The Mach-O export trie prints a leading
+/// underscore; `dlsym` takes the C name without it.
+pub const CRIWARE_UNITY_READY_SYMBOL: &str = "CRIWARE2813B966";
+
+/// Production ladder-3 parameters. This gate is deliberately later than the
+/// minimum IL2CPP-ready instant: the exported predicate becomes true only at
+/// the end of CRIWARE's top-level Unity initialization, whose sole direct
+/// caller in the validated build is IL2CPP-generated managed code.
+pub const CRIWARE_POLL_DEADLINE: Duration = Duration::from_secs(120);
+pub const CRIWARE_POLL_BACKOFF: Duration = Duration::from_millis(50);
 
 /// Diagnostic-only delay between export loading and the single dangerous
 /// `il2cpp_domain_get` call. This is an experiment parameter, not a
@@ -57,6 +71,7 @@ pub const TIMING_PROBE_DELAY: Duration = Duration::from_secs(5);
 /// real backend after ladder 1 acquired the exact handle.
 pub struct BootstrapDeps {
     pub api: Arc<dyn Il2CppApi>,
+    pub readiness: Arc<dyn BootstrapReadiness>,
     pub resolver: Arc<dyn MethodResolver>,
     pub data_root: DataRoot,
     /// Typed configuration parsed by `scsp_start` before the worker spawned
@@ -64,6 +79,50 @@ pub struct BootstrapDeps {
     /// applied by `load_config`.
     pub config: RuntimeConfig,
     pub thread_check: ThreadIdentityCheck,
+}
+
+/// A non-IL2CPP readiness predicate that may be polled before the single
+/// dangerous `il2cpp_domain_get` probe.
+pub trait BootstrapReadiness: Send + Sync + 'static {
+    fn is_ready(&self) -> Result<bool, Il2CppError>;
+}
+
+/// Production readiness probe over the exact UnityFramework handle.
+///
+/// The resolved function has the validated CRIWARE Unity ABI `int(void)` and
+/// reads the same completion word written immediately before the top-level
+/// Atom Unity initializer returns. Symbol absence is target drift and fails
+/// closed; no global symbol lookup is attempted.
+pub struct CriWareUnityReadiness {
+    handle: Arc<ExactHandle>,
+    status: OnceLock<Option<usize>>,
+}
+
+impl CriWareUnityReadiness {
+    #[must_use]
+    pub fn new(handle: Arc<ExactHandle>) -> Self {
+        Self {
+            handle,
+            status: OnceLock::new(),
+        }
+    }
+}
+
+impl BootstrapReadiness for CriWareUnityReadiness {
+    fn is_ready(&self) -> Result<bool, Il2CppError> {
+        let address = self
+            .status
+            .get_or_init(|| self.handle.symbol(CRIWARE_UNITY_READY_SYMBOL))
+            .ok_or(Il2CppError::ReadinessSymbolMissing(
+                CRIWARE_UNITY_READY_SYMBOL,
+            ))?;
+        // SAFETY: static reverse engineering pinned this exact export to the
+        // CRIWARE Unity `int(void)` readiness predicate. ExactHandle also
+        // verifies that the address belongs to this UnityFramework image.
+        let status: unsafe extern "C" fn() -> i32 = unsafe { core::mem::transmute(address) };
+        // SAFETY: plain side-effect-free CRIWARE status query with no args.
+        Ok(unsafe { status() } != 0)
+    }
 }
 
 /// Production plugin list: DebugPlugin (feature-gated, config-gated) FIRST,
@@ -83,7 +142,7 @@ fn production_plugins(config: &RuntimeConfig) -> Vec<Box<dyn Plugin>> {
     list
 }
 
-/// Ladder 1 (the ONLY pollable rung, non-IL2CPP): poll the dyld image list
+/// Ladder 1 (pollable, non-IL2CPP): poll the dyld image list
 /// until a UnityFramework image appears, then open and keep alive the exact
 /// handle. The bounded deadline terminates the one-shot bootstrap.
 ///
@@ -108,15 +167,38 @@ pub fn await_unity_framework(
     }
 }
 
+/// Ladder 3: poll only the non-IL2CPP CRIWARE completion predicate within a
+/// bounded monotonic deadline. A missing symbol or deadline expiry terminates
+/// bootstrap before any IL2CPP API call.
+pub fn await_bootstrap_readiness(
+    readiness: &dyn BootstrapReadiness,
+    deadline: Duration,
+    backoff: Duration,
+) -> Result<(), Il2CppError> {
+    let deadline_at = Instant::now() + deadline;
+    loop {
+        if readiness.is_ready()? {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if now >= deadline_at {
+            return Err(Il2CppError::ReadinessDeadlineExceeded);
+        }
+        std::thread::sleep(backoff.min(deadline_at.saturating_duration_since(now)));
+    }
+}
+
 /// Production dependency construction over an already-acquired exact handle.
 pub fn production_deps(
     handle: Arc<ExactHandle>,
     data_root: &DataRoot,
     config: RuntimeConfig,
 ) -> BootstrapDeps {
+    let readiness = Arc::new(CriWareUnityReadiness::new(Arc::clone(&handle)));
     let backend = Arc::new(scsp_core::BridgeBackend::new(handle));
     BootstrapDeps {
         api: backend.clone(),
+        readiness,
         resolver: backend,
         data_root: data_root.clone(),
         config,
@@ -180,6 +262,16 @@ pub fn run_bootstrap_timing_probe_with_delay(deps: BootstrapDeps, delay: Duratio
 /// Run the one-shot bootstrap. Returns `true` when the App was published and
 /// the scheduler hook installed.
 pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
+    run_bootstrap_with_readiness_wait(deps, CRIWARE_POLL_DEADLINE, CRIWARE_POLL_BACKOFF)
+}
+
+/// Test seam for the production bootstrap; production always uses the
+/// [`CRIWARE_POLL_DEADLINE`] and [`CRIWARE_POLL_BACKOFF`] constants.
+pub fn run_bootstrap_with_readiness_wait(
+    deps: BootstrapDeps,
+    readiness_deadline: Duration,
+    readiness_backoff: Duration,
+) -> bool {
     // The gate exists from the very start of the bootstrap so every failure
     // path below can close it.
     let gate = RuntimeGate::new();
@@ -204,33 +296,45 @@ pub fn run_bootstrap(deps: BootstrapDeps) -> bool {
         return bootstrap_failed(&gate, None);
     }
 
-    // Ladder 3: the domain probe runs exactly once; null terminates the
-    // one-shot bootstrap. Polling this probe is forbidden
-    // (experiment-validated). The bridge's cache hydration re-reads
-    // domain_get internally at ladder 4 — post-gate re-reads are empirically
-    // safe (two live A/B runs) and pinned by the bridge_fake_happy fixture.
-    if let Err(err) = deps.api.domain_get() {
-        tracing::error!(target: "bootstrap", error = %err, "ladder 3 failed (one-shot terminated)");
+    // Ladder 3 (bounded poll, non-IL2CPP): wait until the top-level CRIWARE
+    // Unity initializer has reached its completion flag. Missing/drifted
+    // symbols and timeout both terminate before domain_get is touched.
+    if let Err(err) = await_bootstrap_readiness(
+        deps.readiness.as_ref(),
+        readiness_deadline,
+        readiness_backoff,
+    ) {
+        tracing::error!(target: "bootstrap", error = %err, "ladder 3: CRIWARE Unity readiness failed");
         return bootstrap_failed(&gate, None);
     }
 
-    // Ladder 4: attach (RAII detach of this attachment only) + metadata
+    // Ladder 4: the domain probe runs exactly once; null terminates the
+    // one-shot bootstrap. Polling this probe is forbidden
+    // (experiment-validated). The bridge's cache hydration re-reads
+    // domain_get internally at ladder 5 — post-gate re-reads are empirically
+    // safe (two live A/B runs) and pinned by the bridge_fake_happy fixture.
+    if let Err(err) = deps.api.domain_get() {
+        tracing::error!(target: "bootstrap", error = %err, "ladder 4 failed (one-shot terminated)");
+        return bootstrap_failed(&gate, None);
+    }
+
+    // Ladder 5: attach (RAII detach of this attachment only) + metadata
     // hydration (expensive; runs after attach by design).
     let attach = match deps.api.attach_current_thread() {
         Ok(attach) => attach,
         Err(err) => {
-            tracing::error!(target: "bootstrap", error = %err, "ladder 4 attach failed");
+            tracing::error!(target: "bootstrap", error = %err, "ladder 5 attach failed");
             return bootstrap_failed(&gate, None);
         }
     };
     if let Err(err) = deps.api.hydrate_metadata() {
-        tracing::error!(target: "bootstrap", error = %err, "ladder 4 metadata hydration failed");
+        tracing::error!(target: "bootstrap", error = %err, "ladder 5 metadata hydration failed");
         return bootstrap_failed(&gate, None);
     }
 
-    // Ladder 5 (single shot): runtime/layout identity.
+    // Ladder 6 (single shot): runtime/layout identity.
     if let Err(err) = deps.api.runtime_identity() {
-        tracing::error!(target: "bootstrap", error = %err, "ladder 5 identity mismatch");
+        tracing::error!(target: "bootstrap", error = %err, "ladder 6 identity mismatch");
         return bootstrap_failed(&gate, None);
     }
 

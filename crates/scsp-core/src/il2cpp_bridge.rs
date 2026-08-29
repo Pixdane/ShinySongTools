@@ -10,11 +10,11 @@
 //!
 //! Two experiment-validated constraints are upheld here:
 //!
-//! * the ladder-3 `il2cpp_domain_get` **probe** runs exactly once (never
+//! * the ladder-4 `il2cpp_domain_get` **probe** runs exactly once (never
 //!   polled); attach is driven through the raw `thread_*` exports with the
 //!   domain captured at that probe, so attach adds no extra call. The
 //!   bridge crate's cache hydration still re-reads `domain_get` internally
-//!   at ladder 4 — post-gate re-reads are empirically safe (two live A/B
+//!   at ladder 5 — post-gate re-reads are empirically safe (two live A/B
 //!   runs) and pinned by the `bridge_fake_happy` fixture.
 //! * Attachments are only ever detached by the RAII guard that created them.
 
@@ -59,7 +59,7 @@ pub fn enumerate_unity_framework() -> Option<PathBuf> {
 
 /// The `methodPointer` field is the first field of `MethodInfo` in the
 /// validated layout; the slot address equals the `MethodInfo` address.
-/// Target drift to a different layout is rejected at ladder 5 and by
+/// Target drift to a different layout is rejected at ladder 6 and by
 /// per-target validation, never silently tolerated here.
 const METHOD_POINTER_OFFSET: usize = 0;
 
@@ -198,7 +198,7 @@ fn image_owner(address: usize) -> Option<PathBuf> {
 
 /// Production backend: exact handle + bridge-crate API table.
 ///
-/// `domain` stores the single `il2cpp_domain_get` result so ladder 4 attach
+/// `domain` stores the single `il2cpp_domain_get` result so ladder 5 attach
 /// never has to call it again.
 pub struct BridgeBackend {
     handle: Arc<ExactHandle>,
@@ -277,7 +277,7 @@ impl Il2CppApi for BridgeBackend {
     }
 
     fn attach_current_thread(&self) -> Result<AttachGuard, Il2CppError> {
-        // Ladder 4: attach with the domain captured at ladder 3, never by
+        // Ladder 5: attach with the domain captured at ladder 4, never by
         // re-calling domain_get. An existing attachment (made by external
         // code) is adopted without owning it: the guard does not detach.
         let domain = self.domain().ok_or(Il2CppError::NotReady)?.0 as *mut c_void;
@@ -298,7 +298,7 @@ impl Il2CppApi for BridgeBackend {
     }
 
     fn hydrate_metadata(&self) -> Result<(), Il2CppError> {
-        // Ladder 4 (post-attach): full cache hydration (~seconds on live
+        // Ladder 5 (post-attach): full cache hydration (~seconds on live
         // metadata; a normal bootstrap-worker workload).
         if api::cache::init() {
             Ok(())
@@ -308,7 +308,7 @@ impl Il2CppApi for BridgeBackend {
     }
 
     fn runtime_identity(&self) -> Result<RuntimeIdentity, Il2CppError> {
-        // Ladder 5: structural identity facts visible through the loaded
+        // Ladder 6: structural identity facts visible through the loaded
         // exports and cache. Exact version-string matching against the
         // supported set is a bootstrap parameter and stays in the bootstrap.
         let corlib = api::cache::assembly("mscorlib").ok_or(Il2CppError::IdentityMismatch)?;

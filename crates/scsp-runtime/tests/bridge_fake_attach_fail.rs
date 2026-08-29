@@ -1,4 +1,4 @@
-//! Attach failure: ladder 4 rejects a null thread attach and terminates.
+//! Attach failure: ladder 5 rejects a null thread attach and terminates.
 
 #[path = "bridge_fake/common/mod.rs"]
 mod common;
@@ -17,7 +17,7 @@ fn attach_failure_terminates_before_hydration() {
     );
     assert!(shiny_song_tools::scheduler::scheduler_context().is_none());
 
-    // Ladder 3 probe only: attach failed before hydration could re-read.
+    // Ladder 4 probe only: attach failed before hydration could re-read.
     assert_eq!(common::domain_get_count(&handle), 1);
     // Nothing was attached, so nothing may be detached.
     assert_eq!(common::detach_count(&handle), 0);

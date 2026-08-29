@@ -2,7 +2,7 @@
 //!
 //! Ported from the scsp-playcover-hook experiment `il2cpp-bridge-rs-usage`
 //! (fake-runtime crate) and extended for the production bootstrap: a second
-//! `mscorlib` image so ladder 5's `cache::assembly("mscorlib")` succeeds, and
+//! `mscorlib` image so ladder 6's `cache::assembly("mscorlib")` succeeds, and
 //! an `il2cpp_domain_get` call counter so fixtures can document the real
 //! post-gate call pattern.
 //!
@@ -16,6 +16,8 @@
 //! * `scsp_fixture_domain_get_count` — how many times the process really
 //!   called `il2cpp_domain_get`;
 //! * `scsp_fixture_detach_count` — how many attachments were detached.
+//! * `scsp_fixture_criware_ready_count` — how many times the production
+//!   CRIWARE completion predicate was called.
 
 // The exported functions are a C ABI surface (IL2CPP stand-ins), not a Rust
 // API; per-function `# Safety` docs would be noise on a fake.
@@ -40,6 +42,7 @@ static THREAD: u8 = 8;
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 static DETACH_COUNT: AtomicUsize = AtomicUsize::new(0);
 static DOMAIN_GET_COUNT: AtomicUsize = AtomicUsize::new(0);
+static CRIWARE_READY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C)]
 struct FakeMethod {
@@ -97,6 +100,18 @@ pub extern "C" fn scsp_fixture_domain_get_count() -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn scsp_fixture_detach_count() -> usize {
     DETACH_COUNT.load(Ordering::Acquire)
+}
+
+/// Stand-in for the statically validated CRIWARE Unity completion export.
+#[unsafe(export_name = "CRIWARE2813B966")]
+pub extern "C" fn criware_unity_ready() -> i32 {
+    CRIWARE_READY_COUNT.fetch_add(1, Ordering::AcqRel);
+    i32::from(!env_enabled("SCSP_FAKE_CRIWARE_NOT_READY"))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn scsp_fixture_criware_ready_count() -> usize {
+    CRIWARE_READY_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]

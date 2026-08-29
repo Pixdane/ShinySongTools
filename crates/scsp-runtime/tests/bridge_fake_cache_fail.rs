@@ -18,7 +18,7 @@ fn cache_failure_terminates_the_one_shot_bootstrap() {
     );
     assert!(shiny_song_tools::scheduler::scheduler_context().is_none());
 
-    // The probe ran once; the cache-internal re-read also ran before the
+    // The ladder-4 probe ran once; the cache-internal re-read also ran before the
     // (failing) assembly enumeration.
     assert_eq!(common::domain_get_count(&handle), 2);
     assert_eq!(
