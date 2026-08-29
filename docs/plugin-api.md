@@ -68,6 +68,7 @@ struct FpsState { current: FpsSetting }
 - 插件需要独立状态时用自己的 newtype；需要跨插件共享时直接约定公开 resource 类型，并接受固定注册顺序（前序插件已插入的 resource 对后续插件可见；缺失依赖是 `PluginError::MissingDependency`）。v1 不提供依赖声明或自动排序。
 - Build/Startup 失败时 driver 按 ledger LIFO 移除该 owner 插入的资源；依赖被移除资源的其它插件在 param validation 时失败退役（行为正确，不是隐式容错）。
 - AppWorld 只接受 `Send + Sync + 'static` resource（App 必须跨 Handoff 保持 `Send`）。`Resource: Send` 不表示其中的 Unity 操作可在任意线程执行——Unity 主线程操作必须经 `MainThreadToken`。
+- 只读共享契约（未来的社区翻译表等）可用 bevy 0.19 的 immutable resource 表达，使任何插件都无法取得 `ResMut`；具体标注形式实现时核对。
 - Update system 只能修改已提交的 resource；API 不 re-export `Commands`/`World`，运行期不能插入资源、注册 Hook/route 或登记恢复动作。
 
 ## Phase systems：编译期区分 Startup/Update

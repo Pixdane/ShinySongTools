@@ -44,13 +44,15 @@ scsp-runtime（App/driver + bootstrap/scheduler + DebugPlugin）
 
 | 能力 | 采用（固定版本） | SCSP 仍负责 |
 |---|---|---|
-| plugin resource/system | `bevy_ecs`（0.17.x 固定，升级需重跑无游戏 fixture） | 共享 AppWorld、固定顺序 driver、owner/gate/rollback、逐 system panic 边界、惰性初始化 |
+| plugin resource/system | `bevy_ecs`（0.19.x 固定，升级需重跑无游戏 fixture） | 共享 AppWorld、固定顺序 driver、owner/gate/rollback、逐 system panic 边界、惰性初始化 |
 | IL2CPP backend | `il2cpp-bridge-rs`（0.1.4 固定） | exact UnityFramework handle、readiness 阶梯、attach 生命周期 |
 | structured observability | `tracing`、`tracing-subscriber`、`tracing-os-layer` | 早期初始化、scoped dispatch、Unified Logging、稳定事件码、CompactEvent 队列 |
 | bounded queue | `crossbeam-queue::ArrayQueue` | Bounded mailbox、Observability 队列、满载语义 |
 | error / wire | `thiserror`、`serde`、`serde_json` | `PluginError` 链、JSON-RPC wire |
 
 这里采用把 `bevy_ecs` 嵌入现有宿主循环的模式：SCSP 自己拥有 App、一个共享 AppWorld 和 LateUpdate driver，只复用 World、Resource、SystemParam 与 System；不把控制流交给 `bevy_app::App` 或 Bevy runner。
+
+采用 0.19.x 的依据：嵌入面只覆盖 World/Resource/SystemParam/System/Messages；0.19 的 `SystemParam::get_param` 签名变更（返回 `Result<_, SystemParamValidationError>`）只影响 SCSP 自有的 boxed adapter 层；`Messages<M>`/`Message` derive 自 0.17 起稳定；0.19 新增的 immutable resource 用于表达只读共享契约（具体标注形式实现时核对）。
 
 ## 生产调用链
 
