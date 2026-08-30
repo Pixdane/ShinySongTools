@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "entry-patch-feasibility"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sighook = "0.10"
+libc = "0.2"
+
+[profile.release]
+debug = false

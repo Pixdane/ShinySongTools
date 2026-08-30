@@ -9,3 +9,6 @@ zig-out/
 local.edn
 
 .DS_Store
+
+__pycache__/
+*.pyc
