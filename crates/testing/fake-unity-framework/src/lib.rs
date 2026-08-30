@@ -292,7 +292,7 @@ pub extern "C" fn il2cpp_method_is_inflated(_: *mut c_void) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn il2cpp_method_is_instance(_: *mut c_void) -> bool {
-    true
+    !env_enabled("SCSP_FAKE_SIGNATURE_DRIFT")
 }
 
 #[unsafe(no_mangle)]

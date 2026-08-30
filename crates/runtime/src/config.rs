@@ -1,12 +1,12 @@
 //! Typed configuration loading: `DataRoot/shiny-song-tools/scsp.toml`, fail-closed.
 //!
 //! Missing file: create a fail-closed empty config, then use defaults. Parse
-//! error or schema mismatch: defaults with `debug.enabled` forced off. The v1
-//! schema defines `[debug]` and `[fps]`; every malformed section falls back
-//! to the fully disabled default.
+//! error or a known-field type mismatch: defaults with `debug.enabled` forced
+//! off. The v1 schema defines `[debug]`, `[fps]`, and `[translation]`; unknown
+//! sections and fields are ignored for forward compatibility.
 
 use corelib::DataRoot;
-use corelib::{DebugConfig, FpsConfig, RuntimeConfig};
+use corelib::{DebugConfig, FpsConfig, ReconConfig, RuntimeConfig, TranslationConfig};
 use std::io::Write;
 
 const EMPTY_CONFIG: &str = "# Shiny Song Tools runtime configuration.\n# Empty by default: all optional plugins remain disabled.\n";
@@ -39,38 +39,63 @@ pub fn load_config(data_root: &DataRoot) -> RuntimeConfig {
     parse_config(&text).unwrap_or_default()
 }
 
-/// Parse the `[debug]` and optional `[fps]` sections; anything unexpected is
-/// fail-closed (`None`).
+/// Parse known fields; unknown sections and fields are ignored. A malformed
+/// known field remains fail-closed (`None`).
 fn parse_config(text: &str) -> Option<RuntimeConfig> {
     let value: toml::Value = toml::from_str(text).ok()?;
-    let table = value.as_table()?;
-    if table.keys().any(|key| key != "debug" && key != "fps") {
-        return None;
-    }
+    let _table = value.as_table()?;
     let debug = match value.get("debug") {
         None => false,
         Some(section) => {
             let table = section.as_table()?;
-            if table.keys().any(|key| key != "enabled") {
-                return None;
-            }
-            table.get("enabled")?.as_bool()?
+            table
+                .get("enabled")
+                .map_or(Ok(false), |value| value.as_bool().ok_or(()))
+                .map_err(|_| ())
+                .ok()?
         }
     };
     let fps = match value.get("fps") {
         None => FpsConfig::default(),
         Some(section) => {
             let table = section.as_table()?;
-            if table.keys().any(|key| key != "unlock_fps") {
-                return None;
-            }
-            let unlock_fps = table.get("unlock_fps")?.as_bool()?;
+            let unlock_fps = table
+                .get("unlock_fps")
+                .map_or(Ok(false), |value| value.as_bool().ok_or(()))
+                .map_err(|_| ())
+                .ok()?;
             FpsConfig { unlock_fps }
+        }
+    };
+    let translation = match value.get("translation") {
+        None => TranslationConfig::default(),
+        Some(section) => {
+            let table = section.as_table()?;
+            TranslationConfig {
+                dump: table
+                    .get("dump")
+                    .map_or(Ok(false), |value| value.as_bool().ok_or(()))
+                    .map_err(|_| ())
+                    .ok()?,
+            }
+        }
+    };
+    let recon = match value.get("recon") {
+        None => false,
+        Some(section) => {
+            let table = section.as_table()?;
+            table
+                .get("enabled")
+                .map_or(Ok(false), |value| value.as_bool().ok_or(()))
+                .map_err(|_| ())
+                .ok()?
         }
     };
     Some(RuntimeConfig {
         debug: DebugConfig { enabled: debug },
         fps,
+        translation,
+        recon: ReconConfig { enabled: recon },
     })
 }
 
@@ -90,6 +115,7 @@ mod tests {
         let config = load_config(&root);
         assert!(!config.debug.enabled);
         assert!(!config.fps.unlock_fps);
+        assert!(!config.translation.dump);
         assert_eq!(
             std::fs::read_to_string(path).expect("created config"),
             EMPTY_CONFIG
@@ -103,12 +129,21 @@ mod tests {
         let config = parse_config("[debug]\nenabled = false\n").expect("valid config");
         assert!(!config.debug.enabled);
         assert_eq!(config.fps, FpsConfig::default());
-        // Fail-closed on schema mismatch.
+        // Known-field type errors remain fail-closed.
         assert!(parse_config("[debug]\nenabled = \"yes\"\n").is_none());
         assert!(parse_config("not toml at all [").is_none());
         let config = parse_config("[fps]\nunlock_fps = true\n").expect("valid fps config");
         assert_eq!(config.fps, FpsConfig { unlock_fps: true });
-        assert!(parse_config("[fps]\nenabled = true\ntarget = 120\n").is_none());
-        assert!(parse_config("[unlock_fps]\nunlock_fps = true\n").is_none());
+        let config = parse_config("[fps]\nenabled = true\ntarget = 120\n")
+            .expect("unknown fps fields ignored");
+        assert_eq!(config.fps, FpsConfig::default());
+        let config = parse_config("[translation]\ndump = true\n").expect("valid dump config");
+        assert_eq!(config.translation, TranslationConfig { dump: true });
+        let config = parse_config("[translation]\ndump = true\nenabled = true\n")
+            .expect("unknown translation fields ignored");
+        assert_eq!(config.translation, TranslationConfig { dump: true });
+        let config = parse_config("[future]\nenabled = true\n").expect("unknown section ignored");
+        assert_eq!(config, RuntimeConfig::default());
+        assert!(parse_config("[fps]\nunlock_fps = \"yes\"\n").is_none());
     }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "recon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+corelib = { package = "core", path = "../core" }
+bevy_ecs = { workspace = true, features = ["std"] }
+serde = { workspace = true }

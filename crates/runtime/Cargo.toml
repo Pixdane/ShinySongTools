@@ -14,6 +14,8 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 corelib = { workspace = true }
 debug = { workspace = true }
+recon = { workspace = true }
+translation_dump = { workspace = true }
 unlock_fps = { workspace = true }
 bevy_ecs = { workspace = true }
 crossbeam-queue = { workspace = true }

@@ -27,6 +27,9 @@ pub const MOCK_TARGET: TargetId = TargetId {
     class: "MockClass",
     method: "MockMethod",
     param_count: 1,
+    is_static: true,
+    return_type: "int",
+    parameter_types: &["int"],
 };
 
 #[derive(Clone, Copy)]

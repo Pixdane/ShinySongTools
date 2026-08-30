@@ -91,7 +91,10 @@ impl App {
         };
         match result {
             Ok(()) => {
-                tracing::debug!(owner = owner.0, name = plugin.name(), "plugin build ok");
+                // Build success is a lifecycle fact, not hot-path noise. Use
+                // INFO so Apple Unified Logging persists it and operators can
+                // verify which configured plugins actually entered the App.
+                tracing::info!(owner = owner.0, name = plugin.name(), "plugin build ok");
                 self.sync_inventory();
             }
             Err(err) => {

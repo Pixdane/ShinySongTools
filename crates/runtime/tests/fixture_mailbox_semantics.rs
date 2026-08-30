@@ -62,6 +62,9 @@ impl HookTarget for FixtureTarget {
         class: "MockClass",
         method: "MailboxMethod",
         param_count: 1,
+        is_static: true,
+        return_type: "int",
+        parameter_types: &["int"],
     };
     type Original = unsafe extern "C" fn(usize) -> usize;
     fn replacement_addr(original: Self::Original) -> usize {

@@ -1,7 +1,8 @@
 //! Runtime configuration as seen by plugins.
 //!
 //! The single configuration source is `DataRoot/shiny-song-tools/scsp.toml`; the runtime
-//! parses it (fail-closed) and hands the typed result to `App::new`. Plugins
+//! parses it (fail-closed for syntax and known-field errors; unknown fields
+//! are ignored) and hands the typed result to `App::new`. Plugins
 //! only read the typed snapshot through `AppCtx`.
 
 /// Typed runtime configuration snapshot.
@@ -9,6 +10,8 @@
 pub struct RuntimeConfig {
     pub debug: DebugConfig,
     pub fps: FpsConfig,
+    pub translation: TranslationConfig,
+    pub recon: ReconConfig,
 }
 
 /// `[debug]` section. `enabled = true` registers the DebugPlugin at the head
@@ -24,4 +27,18 @@ pub struct DebugConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FpsConfig {
     pub unlock_fps: bool,
+}
+
+/// `[translation]` section. Dump mode is an explicit development switch and
+/// remains disabled in both the default and every fail-closed fallback.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TranslationConfig {
+    pub dump: bool,
+}
+
+/// `[recon]` section. Development-only runtime reconnaissance plugin;
+/// disabled by default and in every fail-closed fallback.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReconConfig {
+    pub enabled: bool,
 }

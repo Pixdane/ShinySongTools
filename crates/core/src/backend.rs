@@ -99,6 +99,24 @@ pub trait Il2CppApi: Send + Sync + 'static {
 pub trait MethodResolver: Send + Sync {
     fn resolve(&self, target: &TargetId) -> Result<MethodRef, HookError>;
     fn slot_memory(&self, method: &MethodRef) -> Arc<dyn SlotMemory>;
+
+    /// [`SlotMemory`] over a function-entry inline patch for the resolved
+    /// method (`HookMechanism::EntryPatch`). `replacement` is the address of
+    /// the plugin's replacement function; it decides the patch width (near /
+    /// far jump) and therefore how many prologue instructions the trampoline
+    /// must reproduce.
+    ///
+    /// Defaults to unsupported: only backends with real process memory access
+    /// can implement it, and test fixtures keep using slot memory.
+    fn entry_patch_memory(
+        &self,
+        _method: &MethodRef,
+        _replacement: usize,
+    ) -> Result<Arc<dyn SlotMemory>, HookError> {
+        Err(HookError::EntryPatchUnsupported(
+            "this method resolver does not implement entry patches",
+        ))
+    }
 }
 
 /// Combined capability handed to hook installation.

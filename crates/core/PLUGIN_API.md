@@ -134,7 +134,8 @@ let (tx, rx) = ctx.main_to_callback::<DebugRequest>(Mailbox::shared_latest())?;
 
 ```rust,ignore
 pub trait HookTarget: 'static {
-    const TARGET: TargetId;                 // assembly/namespace/class/name/param_count
+    const TARGET: TargetId;                 // identity + static/return/parameter types
+    const MECHANISM: HookMechanism = HookMechanism::MethodPointerSlot;
     type Original: Copy;                    // typed fn pointer（含隐式 MethodInfo 参数）
     fn validate(method: &MethodRef) -> Result<(), HookError>;
 }
@@ -155,7 +156,8 @@ ctx.hook(FPS_TARGET_RATE_SITE)          // HookBuilder<T, Unpublished>
 ```
 
 - `HookBuilder<T, Unpublished>` 只提供 `container` / `handler`；`handler` 构造完整 `HookSite`（typed original、RuntimeGateReader、PluginGateReader、容器 Arc）并发布到目标唯一静态 `OnceLock`，产生 `HookBuilder<T, Published>`。**发布先于安装由类型保证**：`install` 只在 `Published` 态存在。
-- `install` 内部完成 MethodRef 解析校验 → `MethodPointerSlot` CAS → readback，返回 `InstalledHook`；其 restore 记录进入 owner ledger（ownership-aware 恢复、drift 不盲写，语义见 core 与 plugin-system 分册）。
+- `install` 内部完成 MethodRef 解析校验 → 机制安装 → readback，返回 `InstalledHook`；其 restore 记录进入 owner ledger（ownership-aware 恢复、drift 不盲写，语义见 core 与 plugin-system 分册）。
+- **安装机制（`HookTarget::MECHANISM`，默认 `MethodPointerSlot`）**：槽替换只拦截经槽分派的调用（虚/接口分派、委托、反射、Unity 生命周期回调）；被游戏代码以 AOT 直接调用方式进入的方法必须声明 `HookMechanism::EntryPatch`，由 `crates/core/src/entry_patch.rs` 在函数入口写内联跳转（macOS 签名 text 页通过 JIT 暂存页整页 `mach_vm_remap` 替换，而非 in-place 写）。两种机制对外呈现完全相同的 CAS/readback/ownership 协议（`SlotMemory`），typed original、dispatch、restore 对插件无差别。EntryPatch 安装时若入口序言含不可 verbatim 搬迁的 PC 相对指令则 fail closed（`HookError::EntryPatchUnsupported`）。
 - 静态槽一旦发布便占用该目标直到进程退出；即使 CAS 安装失败、Hook 已恢复或插件退役，也不清空或复用。一个目标一个静态 site：不支持同目标多实例、重复注册、重装、slot chaining 或物理卸载。
 - callback 上下文形状：
 

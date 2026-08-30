@@ -31,6 +31,9 @@ const PROBE_TARGET: TargetId = TargetId {
     class: "QualitySettings",
     method: "set_targetFrameRate",
     param_count: 1,
+    is_static: true,
+    return_type: "void",
+    parameter_types: &["int"],
 };
 
 struct FpsProbe;

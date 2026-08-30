@@ -20,8 +20,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use corelib::{
-    GateReader, HookError, MainThreadToken, MethodPointerSlot, MethodRef, OriginalGuard,
-    OriginalPhase, TargetId,
+    GateReader, HookError, HookMechanism, MainThreadToken, MethodPointerSlot, MethodRef,
+    OriginalGuard, OriginalPhase, TargetId,
 };
 
 use crate::PluginError;
@@ -34,14 +34,25 @@ use crate::context::AppCtx;
 /// it). The raw→typed conversion lives in the author-owned unsafe boundary
 /// below; the framework never transmutes on its own.
 pub trait HookTarget: 'static {
-    /// Assembly / namespace / class / method / parameter count identity.
+    /// Assembly / namespace / class / method plus the complete managed
+    /// signature used to validate the native ABI.
     const TARGET: TargetId;
+
+    /// Install mechanism. The default swaps the `MethodInfo.methodPointer`
+    /// slot, which only intercepts slot-dispatched callers (Unity lifecycle
+    /// callbacks, virtual/interface dispatch, delegates, reflection). Targets
+    /// invoked through AOT-compiled direct calls — ordinary game code calling
+    /// a managed method — must declare [`HookMechanism::EntryPatch`] to
+    /// intercept the function entry itself.
+    const MECHANISM: HookMechanism = HookMechanism::MethodPointerSlot;
+
     /// Typed original function pointer type (carries the whole ABI).
     type Original: Copy;
 
     /// Validate the resolved method against this target. The default
-    /// implementation rejects identity drift; authors may add stricter
-    /// checks (return type, instance-ness) but never weaker ones.
+    /// implementation rejects identity, static/instance, return/parameter
+    /// type, and generic drift; authors may add stricter checks, never weaker
+    /// ones.
     fn validate(method: &MethodRef) -> Result<(), HookError> {
         if method.matches_target(&Self::TARGET) {
             Ok(())
@@ -404,9 +415,12 @@ impl<'ctx, 'host, T: HookTarget, C: Send + Sync + 'static>
             .ok_or(PluginError::Message("method resolver unavailable"))?;
         let method = resolver.resolve(&T::TARGET)?;
         T::validate(&method)?;
-        let memory = resolver.slot_memory(&method);
-        let slot = Arc::new(MethodPointerSlot::bind(memory)?);
         let replacement_addr = T::replacement_addr(inner.replacement);
+        let memory = match T::MECHANISM {
+            HookMechanism::MethodPointerSlot => resolver.slot_memory(&method),
+            HookMechanism::EntryPatch => resolver.entry_patch_memory(&method, replacement_addr)?,
+        };
+        let slot = Arc::new(MethodPointerSlot::bind(memory)?);
 
         // Publish the original address AND the live slot state before the
         // CAS: once the replacement is reachable, dispatch must always be

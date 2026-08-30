@@ -85,6 +85,15 @@ impl MethodResolver for MockResolver {
             class: target.class.to_owned(),
             method: target.method.to_owned(),
             param_count: target.param_count,
+            is_static: target.is_static,
+            return_type: target.return_type.to_owned(),
+            parameter_types: target
+                .parameter_types
+                .iter()
+                .map(|ty| (*ty).to_owned())
+                .collect(),
+            is_generic: false,
+            is_inflated: false,
             method_info: addr,
             method_pointer_slot: addr,
         })

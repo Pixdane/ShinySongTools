@@ -15,9 +15,27 @@ use crate::error::HookError;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Declared identity of a hook target: assembly / namespace / class / method
-/// / parameter count. Compared against the runtime-resolved method identity
-/// to reject target drift.
+/// Install mechanism of one hook target.
+///
+/// Both mechanisms expose identical CAS + readback + ownership semantics
+/// through [`SlotMemory`]; the difference is the physical site:
+///
+/// * [`HookMechanism::MethodPointerSlot`] swaps the `MethodInfo.methodPointer`
+///   word. It only intercepts callers that dispatch through the slot
+///   (virtual/interface dispatch, delegates, reflection, Unity lifecycle
+///   callbacks).
+/// * [`HookMechanism::EntryPatch`] rewrites the function entry itself (inline
+///   jump to the replacement). It intercepts every caller, including
+///   AOT-compiled direct branches. See [`crate::entry_patch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookMechanism {
+    MethodPointerSlot,
+    EntryPatch,
+}
+
+/// Declared identity and complete managed signature of a hook target.
+/// Compared against runtime metadata before the MethodPointer can be written,
+/// rejecting name, overload, static/instance, type, or generic drift.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetId {
     pub assembly: &'static str,
@@ -25,23 +43,33 @@ pub struct TargetId {
     pub class: &'static str,
     pub method: &'static str,
     pub param_count: u32,
+    /// Whether the managed method is static. Instance methods carry the
+    /// implicit `this` argument in their native ABI.
+    pub is_static: bool,
+    /// Canonical C#-style return type (`void`, `int`, `string`, ...).
+    pub return_type: &'static str,
+    /// Canonical C#-style explicit parameter types, in declaration order.
+    pub parameter_types: &'static [&'static str],
 }
 
 impl TargetId {
     #[must_use]
-    pub fn matches(
-        &self,
-        assembly: &str,
-        namespace: &str,
-        class: &str,
-        method: &str,
-        param_count: u32,
-    ) -> bool {
-        self.assembly == assembly
-            && self.namespace == namespace
-            && self.class == class
-            && self.method == method
-            && self.param_count == param_count
+    pub fn matches(&self, actual: &MethodRef) -> bool {
+        self.assembly == actual.assembly
+            && self.namespace == actual.namespace
+            && self.class == actual.class
+            && self.method == actual.method
+            && self.param_count == actual.param_count
+            && self.parameter_types.len() == self.param_count as usize
+            && self.is_static == actual.is_static
+            && self.return_type == actual.return_type
+            && self
+                .parameter_types
+                .iter()
+                .copied()
+                .eq(actual.parameter_types.iter().map(String::as_str))
+            && !actual.is_generic
+            && !actual.is_inflated
     }
 }
 
@@ -58,6 +86,11 @@ pub struct MethodRef {
     pub class: String,
     pub method: String,
     pub param_count: u32,
+    pub is_static: bool,
+    pub return_type: String,
+    pub parameter_types: Vec<String>,
+    pub is_generic: bool,
+    pub is_inflated: bool,
     pub method_info: usize,
     pub method_pointer_slot: usize,
 }
@@ -66,13 +99,7 @@ impl MethodRef {
     /// `true` when the resolved method matches the declared target exactly.
     #[must_use]
     pub fn matches_target(&self, target: &TargetId) -> bool {
-        target.matches(
-            &self.assembly,
-            &self.namespace,
-            &self.class,
-            &self.method,
-            self.param_count,
-        )
+        target.matches(self)
     }
 }
 
@@ -238,6 +265,56 @@ impl MethodPointerSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const STRING_LOOKUP: TargetId = TargetId {
+        assembly: "Game.dll",
+        namespace: "Game",
+        class: "Localizer",
+        method: "GetText",
+        param_count: 2,
+        is_static: false,
+        return_type: "string",
+        parameter_types: &["string", "int"],
+    };
+
+    fn string_lookup_ref() -> MethodRef {
+        MethodRef {
+            assembly: "Game.dll".to_owned(),
+            namespace: "Game".to_owned(),
+            class: "Localizer".to_owned(),
+            method: "GetText".to_owned(),
+            param_count: 2,
+            is_static: false,
+            return_type: "string".to_owned(),
+            parameter_types: vec!["string".to_owned(), "int".to_owned()],
+            is_generic: false,
+            is_inflated: false,
+            method_info: 0x1000,
+            method_pointer_slot: 0x1000,
+        }
+    }
+
+    #[test]
+    fn target_identity_includes_the_complete_managed_signature() {
+        let exact = string_lookup_ref();
+        assert!(exact.matches_target(&STRING_LOOKUP));
+
+        let mut wrong_return = exact.clone();
+        wrong_return.return_type = "object".to_owned();
+        assert!(!wrong_return.matches_target(&STRING_LOOKUP));
+
+        let mut wrong_static = exact.clone();
+        wrong_static.is_static = true;
+        assert!(!wrong_static.matches_target(&STRING_LOOKUP));
+
+        let mut wrong_parameters = exact.clone();
+        wrong_parameters.parameter_types.swap(0, 1);
+        assert!(!wrong_parameters.matches_target(&STRING_LOOKUP));
+
+        let mut generic = exact;
+        generic.is_generic = true;
+        assert!(!generic.matches_target(&STRING_LOOKUP));
+    }
 
     /// In-memory slot used by core-level unit tests.
     #[derive(Default)]

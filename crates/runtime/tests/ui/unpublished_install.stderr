@@ -7,9 +7,9 @@ warning: unused import: `HookSite`
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
 error[E0599]: no method named `install` found for struct `HookBuilder<'_, '_, FakeTarget, Container, Unpublished>` in the current scope
-  --> tests/ui/unpublished_install.rs:32:21
+  --> tests/ui/unpublished_install.rs:35:21
    |
-32 |     ctx.hook(&SITE).install();
+35 |     ctx.hook(&SITE).install();
    |                     ^^^^^^^ method not found in `HookBuilder<'_, '_, FakeTarget, Container, Unpublished>`
    |
    = note: the method was found for

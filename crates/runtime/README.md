@@ -1,6 +1,6 @@
 # Runtime crate
 
-状态：v2 设计（2026-08-29 修订）。本版依据本文后附的“架构审查与类型驱动重设计记录”及用户决策修订。产品定位：**个人使用的插件平台**——v1 交付正确的插件系统、一个 FPS 解锁测试插件、配置文件与面向插件开发的 Debug socket（含运行时自省 topic）；翻译、贴图等功能插件按同一 API 后续逐个立项。
+状态：v2 实现进行中（2026-08-30 修订）。产品定位：**个人使用的插件平台**——当前已有插件系统、FPS 解锁测试插件、配置文件、面向插件开发的 Debug socket（含运行时自省 topic），以及翻译插件的第一阶段 Dump 插件；翻译替换与贴图等功能仍按同一 API 后续逐个立项。
 
 本文是进程内架构的索引，只定义 crate 依赖方向、文档职责和跨层不变量。各系统详细设计以对应分册为准；**跨层不变量以本档为唯一权威清单**，分册只引用、不重复定义。
 
@@ -25,9 +25,10 @@
 | Core crate + Plugin API | `corelib` | 平台基础 API、MainThreadToken、gate、MethodPointer 封装、plugin facade、callback-safe 原语、CompactEvent |
 | App 与 driver + Bootstrap 与 scheduler + Swift FFI | `shiny_song_tools` | App、PluginManager、owner scope、`scsp_start`、readiness、Handoff、TLS、global failure |
 | Unlock FPS plugin | `unlock_fps` | Unity 两个静态 setter hook、main→callback latest route、`unlock_fps.get`/`unlock_fps.set` |
+| Translation dump plugin | `translation_dump` | `GetTextOrNull` 完整 ABI 校验、callback→main bounded route、`localify.json` 合并与原子落盘 |
 | Debug control plane 与 Observability | `debug` | JSON-RPC over UDS、dispatch、pending/correlation、自省 topic；runtime 负责 observability root |
 
-生产 crate 目前为四个：`core`、`debug`、`unlock_fps`、`runtime`（另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `runtime`；plugin API facade 位于 `core::plugin_api`，功能插件按职责独立成 crate。
+生产 crate 目前为五个：`core`、`debug`、`unlock_fps`、`translation_dump`、`runtime`（另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `runtime`；plugin API facade 位于 `core::plugin_api`，功能插件按职责独立成 crate。
 
 ## 依赖方向
 
@@ -36,8 +37,8 @@ core
   ↑
 core::plugin_api   ←—— 功能插件 API facade
   ↑                    ↑
-unlock_fps             debug（DebugPlugin / transport）
-  ↑                    ↑
+unlock_fps   translation_dump   debug（DebugPlugin / transport）
+  ↑              ↑              ↑
 runtime（App/driver + bootstrap/scheduler）
 ```
 
@@ -81,14 +82,14 @@ PlayTools AKPlugin
 - resource 由 build facade / Startup system **直接插入**共享 AppWorld，owner ledger 记录 (类型, 顺序)；重复类型返回 `PluginError::ResourceConflict`，不覆盖。Build/Startup 失败由 ledger LIFO 移除该 owner 资源并逆序执行 restore actions；Update 失败退役不移除资源（避免连锁），只执行 restore actions。依赖被移除资源的插件在 param validation 时失败退役。
 - 插件运行状态统一放在共享 AppWorld 的 typed resource 中；PluginManager 只记录 owner、system、gate、ledger 与 route/container 句柄。
 - 所有 plugin system 在同一共享 AppWorld 上顺序执行；同一资源类型只有一份。v1 不构建 before/after 依赖图，不使用 Bevy Schedule executor。
-- Hook 安装走 typestate：`HookBuilder<T, Published>::install` 是唯一安装路径，CallbackSite（typed original + 双 gate reader + 容器 Arc）先发布到目标唯一静态 `OnceLock` 再 CAS 安装；site 保活到进程退出，不替换、不注销。hook 目标（ABI wrapper）由插件作者在同仓库内自定义并审阅——个人使用、受信任边界，plugin API 不承诺跨版本稳定。
+- Hook 安装走 typestate：`HookBuilder<T, Published>::install` 是唯一安装路径，CallbackSite（typed original + 双 gate reader + 容器 Arc）先发布到目标唯一静态 `OnceLock` 再 CAS 安装；site 保活到进程退出，不替换、不注销。安装前校验 assembly/namespace/class/name、static/instance、返回类型、逐参数类型以及 generic/inflated 状态。hook 目标（ABI wrapper）由插件作者在同仓库内自定义并审阅——个人使用、受信任边界，plugin API 不承诺跨版本稳定。
 - callback 不访问 App、AppWorld、PluginManager 或主线程 TLS；只使用所属 CallbackSiteContainer 的字段与注入的 `&CallbackCtx` 能力。callback 修改主线程状态只经跨域 route 提交，由下一次外层 LateUpdate 处理。
 - 跨域 route 的 mailbox 语义在注册时按类型选择：`latest`（覆盖）/ `bounded::<N>`（保序 FIFO）/ `shared_latest`（`Arc<T>` 单槽，承载有主结构化数据）。callback 侧 endpoint 操作要求 `&CallbackCtx`，main 侧要求 `&UpdateCtx<'_>`；`latest`/`bounded` 的 payload 满足 `CallbackPayload: Copy + Send + Sync + 'static`，`shared_latest` 的 `T: Send + Sync + 'static` 为无副作用 Drop 的普通数据。
 - 所有功能 callback 与 plugin debug route 必须同时通过 RuntimeGate 与所属 PluginGate；global failure 首先关闭 RuntimeGate（Release），之后观察到关闭的 callback 只调 typed original。
 - bootstrap readiness 阶梯中，跨过 image/exports gate 后的 `il2cpp_domain_get` **探测恰好一次**；返回 null 即本次一次性 bootstrap 终止，不轮询重试（实验定案，见 runtime-crate 分册）。gate 之后的元数据查询链中，bridge crate 内部（cache hydration 等）会重读 domain_get——该重读已被两次实机 A/B 实证无害，且由无游戏 fixture（bridge_fake_happy）固化调用模式；本条约束的是探测不轮询，不是全进程调用次数。
 - `panic = "unwind"`；Rust panic 不跨 FFI。每个 boxed system 有 owner-scoped panic boundary；scheduler 热路径有 `SchedulerFrame`/`OriginalPhase` 三阶段守护，original 恰好调用一次。
 - Observability 在最外层启动保护中尽早建立：runtime-owned scoped `tracing::Dispatch` 覆盖所有受控执行根；callback/scheduler 热路径只提交固定大小 `CompactEvent` 到进程级队列，由独立 drain worker 输出。v1 只输出 Apple Unified Logging。
-- 配置唯一来源为 `DataRoot/shiny-song-tools/scsp.toml`（typed `RuntimeConfig`）；缺失时自动创建空的 fail-closed 配置并使用默认值，解析失败仍 fail-closed（全默认值、debug 强制关闭）。`debug.enabled` 为真时注册 DebugPlugin（JSON-RPC 2.0 over UDS；dispatch 走"DebugPlugin → owner handler system → callback relay"，见 debug 分册），否则不注册、不建 socket。
+- 配置唯一来源为 `DataRoot/shiny-song-tools/scsp.toml`（typed `RuntimeConfig`）；缺失时自动创建空的 fail-closed 配置并使用默认值，TOML 语法错误或已知字段类型错误仍 fail-closed（全默认值、debug 强制关闭），未知 section/字段忽略以保持向前兼容。`debug.enabled` 为真时注册 DebugPlugin（JSON-RPC 2.0 over UDS；dispatch 走"DebugPlugin → owner handler system → callback relay"，见 debug 分册），否则不注册、不建 socket。
 
 ## 证据边界
 
@@ -100,7 +101,7 @@ PlayTools AKPlugin
 - Swift `AKPlugin` 的入口行为见本 crate Rustdoc 的“Swift FFI 入口”。
 - Frida attach、load-time interpose 或其它备选注入路线。
 - 某个游戏版本的 SHA、地址或实验批次流水。
-- 翻译、贴图、身体参数、Live MV 等具体功能插件（v1 只有 FPS 解锁测试插件；翻译后续立项并复用 SCSPTranslationData 社区格式）。
+- 翻译替换、贴图、身体参数、Live MV 等具体功能插件（当前翻译范围只到文本 Dump，尚未替换返回值）。
 - 游戏内 overlay GUI、全局热键、输入或渲染子系统（控制面 = 配置文件 + debug socket，两个执行域）。
 - 游戏修改、启动、attach、sample 或实机验证授权。
 - 动态 dylib 插件发现、热加载、entity/component gameplay model、多线程 system executor。
@@ -109,4 +110,4 @@ PlayTools AKPlugin
 
 待打磨：exact UnityFramework 的 image identity 格式（当前实现仅匹配文件名，身份校验过弱）、`runtime.info` 的 readiness 阶梯结果字段、per-category os_log 句柄（现单 category + target 区分）、生产 DataRoot 下 d.sock 的 `SUN_LEN` 路径长度上限（容器 bundle-id 过长时 bind 会失败，需设计短路径方案）、DebugPlugin 自省外的 request 生命周期压测。已收敛并实现：四 crate 物理布局、phase 类型、route 三种 mailbox（`LatestCell`/`BoundedQueue`/`SharedSlot`）、hook typestate（slot 事实来源 dispatch）、`define_hook_site!` 宏、owner ledger（`ResourceLedgerEntry`）、Debug dispatch 流、错误体系、config fail-closed、readiness 阶梯 1 轮询参数（`IMAGE_POLL_*`）、compact 事件字段、独立 `unlock_fps` 与 `debug` 插件。
 
-待设计：plugin/callback 物理卸载、scheduler quiescence、FPS target 的当前游戏版本实机验证与 restore 证据、翻译插件立项（社区格式兼容 + callback-safe 快照替换协议）、超出薄事件层的高级诊断与 crash artifact。
+待设计：plugin/callback 物理卸载、scheduler quiescence、FPS 与 Translation Dump target 的当前游戏版本实机验证及 restore 证据、翻译替换的社区格式兼容与 callback-safe 快照替换协议、超出薄事件层的高级诊断与 crash artifact。

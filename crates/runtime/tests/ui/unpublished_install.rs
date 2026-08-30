@@ -13,6 +13,9 @@ impl HookTarget for FakeTarget {
         class: "C",
         method: "M",
         param_count: 0,
+        is_static: true,
+        return_type: "int",
+        parameter_types: &[],
     };
     type Original = unsafe extern "C" fn(usize) -> usize;
     fn replacement_addr(original: Self::Original) -> usize {

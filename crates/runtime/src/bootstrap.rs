@@ -31,10 +31,12 @@ use corelib::{
 };
 use corelib::{Plugin, RuntimeConfig};
 use debug::DebugPlugin;
+use recon::ReconPlugin;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
+use translation_dump::TranslationDumpPlugin;
 use unlock_fps::FpsPlugin;
 
 /// The single experiment-validated scheduler target.
@@ -44,6 +46,9 @@ pub const SCHEDULER_TARGET: TargetId = TargetId {
     class: "MainThreadDispatcher",
     method: "LateUpdate",
     param_count: 0,
+    is_static: false,
+    return_type: "void",
+    parameter_types: &[],
 };
 
 /// Production ladder-1 parameters (runtime crate Rustdoc: 具体总超时与
@@ -137,6 +142,12 @@ fn production_plugins(config: &RuntimeConfig) -> Vec<Box<dyn Plugin>> {
     }
     if config.fps.unlock_fps {
         list.push(Box::new(FpsPlugin));
+    }
+    if config.translation.dump {
+        list.push(Box::new(TranslationDumpPlugin));
+    }
+    if config.recon.enabled {
+        list.push(Box::new(ReconPlugin));
     }
     list
 }
@@ -452,18 +463,35 @@ fn validate_scheduler_method(method: &MethodRef) -> bool {
 #[cfg(test)]
 mod production_plugin_tests {
     use super::production_plugins;
-    use corelib::{DebugConfig, FpsConfig, RuntimeConfig};
+    use corelib::{DebugConfig, FpsConfig, ReconConfig, RuntimeConfig, TranslationConfig};
 
     #[test]
     fn debug_plugin_precedes_fps_when_both_are_enabled() {
         let config = RuntimeConfig {
             debug: DebugConfig { enabled: true },
             fps: FpsConfig { unlock_fps: true },
+            translation: TranslationConfig { dump: true },
+            recon: ReconConfig { enabled: false },
         };
         let names: Vec<_> = production_plugins(&config)
             .iter()
             .map(|plugin| plugin.name())
             .collect();
-        assert_eq!(names, vec!["debug", "unlock_fps"]);
+        assert_eq!(names, vec!["debug", "unlock_fps", "translation_dump"]);
+    }
+
+    #[test]
+    fn recon_plugin_is_config_gated_and_runs_last() {
+        let config = RuntimeConfig {
+            debug: DebugConfig { enabled: true },
+            fps: FpsConfig { unlock_fps: false },
+            translation: TranslationConfig { dump: false },
+            recon: ReconConfig { enabled: true },
+        };
+        let names: Vec<_> = production_plugins(&config)
+            .iter()
+            .map(|plugin| plugin.name())
+            .collect();
+        assert_eq!(names, vec!["debug", "recon"]);
     }
 }

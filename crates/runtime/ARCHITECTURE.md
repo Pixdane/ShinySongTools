@@ -229,7 +229,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 }
 ```
 
-- `DataRoot = <游戏容器 Documents>/shiny-song-tools/`；布局：`scsp.toml`、`translations/`、`logs/`（v1 无 file sink 时可缺省）、`d.sock`。
+- `DataRoot = <游戏容器 Documents>/shiny-song-tools/`；布局：`scsp.toml`、`translations/`、`dumps/localify.json`（translation dump 开启时）、`logs/`（v1 无 file sink 时可缺省）、`d.sock`。
 - worker 在 `App::new` 前解析：缺失 ⇒ 默认值；解析失败 ⇒ 记录 observability、按全默认值、debug 强制 off（fail-closed：配置只权限能开关，永不解锁未配置的能力）。
 - 子目录由各插件 build 时按需创建（worker 侧，`AnyThread` 阶段），创建失败 = 该插件 build 失败退役。
 

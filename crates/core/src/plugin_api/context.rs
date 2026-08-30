@@ -8,7 +8,7 @@
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::Resource;
 use bevy_ecs::world::World;
-use corelib::{DataRoot, GateReader, OwnerId, PluginError};
+use corelib::{CallbackIl2Cpp, DataRoot, GateReader, OwnerId, PluginError};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -82,6 +82,14 @@ impl<'host> AppCtx<'host> {
     #[must_use]
     pub fn data_root(&mut self) -> DataRoot {
         self.host.data_root()
+    }
+
+    /// Read-only IL2CPP string access for hook callbacks. Every operation on
+    /// the returned capability is additionally branded by `CallbackCtx`, so
+    /// it cannot be used from Startup or Update systems.
+    #[must_use]
+    pub fn callback_il2cpp(&mut self) -> CallbackIl2Cpp {
+        CallbackIl2Cpp::new()
     }
 
     /// Directly insert a typed resource into the shared AppWorld and record

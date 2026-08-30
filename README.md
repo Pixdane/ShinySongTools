@@ -20,6 +20,7 @@ git submodule update --init --recursive
 
 - [`corelib`](crates/core/README.md)：平台原语与 plugin API。
 - [`debug`](crates/debug/README.md)：Debug control plane 与 Observability。
+- [`translation_dump`](crates/translation_dump/README.md)：翻译文本的 callback-safe 采集与离线词典落盘。
 - [`unlock_fps`](crates/unlock_fps/README.md)：FPS 功能插件。
 - [`shiny_song_tools`](crates/runtime/README.md)：App、bootstrap、scheduler 与 Swift FFI。
 - [`fake-unity-framework`](crates/testing/fake-unity-framework/README.md)：无游戏测试 fixture。

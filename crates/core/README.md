@@ -4,7 +4,7 @@
 
 ## 依赖边界
 
-`core` 位于依赖图底部，被 `debug`、`unlock_fps` 与 `runtime` 依赖，并承载 plugin API facade。实现优先组合已审阅的 crate，而不是重新实现通用容器或 facade：
+`core` 位于依赖图底部，被 `debug`、`unlock_fps`、`translation_dump` 与 `runtime` 依赖，并承载 plugin API facade。实现优先组合已审阅的 crate，而不是重新实现通用容器或 facade：
 
 - `thiserror` 派生公开 typed error。
 - `il2cpp-bridge-rs`（0.1.4 固定）提供实验验证过的 IL2CPP API table 与 metadata 查询基础。
@@ -59,7 +59,7 @@ pub struct RuntimeGate(GateReader);
 
 MethodPointer slot 的原子替换与 original 的 typed 函数调用属于两个不同安全层。core 只提供不带函数 ABI 的底层封装，不设计能够调用任意 IL2CPP 方法的通用 Hook 引擎。
 
-`MethodRef` 表示经过 IL2CPP 查询和 layout 校验的目标方法，至少包含方法身份（assembly/namespace/class/name/param count/返回类型）、`MethodInfo` 地址以及 `methodPointer` slot 地址。上层不得自行计算 offset 或直接操作裸 `MethodInfo` 指针。
+`MethodRef` 表示经过 IL2CPP 查询和 layout 校验的目标方法，包含 assembly/namespace/class/name、static/instance、返回类型、逐参数类型、generic/inflated 状态、`MethodInfo` 地址以及 `methodPointer` slot 地址。完整 managed 签名在任何 slot 写入前匹配；上层不得自行计算 offset 或直接操作裸 `MethodInfo` 指针。
 
 `MethodPointerSlot` 只持有经过校验的 slot 地址，负责：
 
@@ -92,10 +92,10 @@ installed = true
 
 ```rust,ignore
 pub struct Il2CppRuntime(Arc<Il2CppBackend>);
-pub struct CallbackIl2Cpp(Arc<Il2CppBackend>);
+pub struct CallbackIl2Cpp { /* private callback-domain capability */ }
 ```
 
-`Il2CppRuntime` 是正常解析和调用入口；需要主线程的安全方法还必须接受 `&MainThreadToken`。`CallbackIl2Cpp` 只暴露对应 callback 已审阅的有限操作，不提供任意导出调用、任意地址访问或隐式线程附着。callback 只有在插件明确导入该 capability 时才能取得它。
+`Il2CppRuntime` 是正常解析和调用入口；需要主线程的安全方法还必须接受 `&MainThreadToken`。`CallbackIl2Cpp` 当前只暴露以 `&CallbackCtx` 为凭据的 live `System.String` UTF-16 借用，不提供任意导出调用、任意地址访问、managed 分配或隐式线程附着。callback 只有在插件明确导入该 capability 时才能取得它。
 
 `Il2CppBackend` 是否能够安全实现 `Send + Sync` 必须由具体字段、动态库 handle 生命周期和每个公开方法的线程约束证明，不能仅为满足 Resource bound 添加无依据的 `unsafe impl`。
 

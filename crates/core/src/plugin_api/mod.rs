@@ -13,7 +13,7 @@ pub mod phase;
 pub mod plugin;
 pub mod route;
 
-pub use config::{DebugConfig, FpsConfig, RuntimeConfig};
+pub use config::{DebugConfig, FpsConfig, ReconConfig, RuntimeConfig, TranslationConfig};
 pub use context::AppCtx;
 pub use debug::{
     CallbackDebugEndpoints, CallbackDebugTopic, DebugDecodeFn, DebugHandlerError,

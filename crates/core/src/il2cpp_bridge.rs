@@ -22,6 +22,8 @@ use crate::backend::{
     AttachGuard, DomainHandle, Il2CppApi, ImageHandle, ImageIdentity, MethodResolver,
     RuntimeIdentity,
 };
+#[cfg(target_arch = "aarch64")]
+use crate::entry_patch::EntryPatchMemory;
 use crate::error::{HookError, Il2CppError};
 use crate::method_slot::{MethodRef, RawSlotMemory, SlotMemory, TargetId};
 use il2cpp_bridge_rs::api;
@@ -345,12 +347,27 @@ impl MethodResolver for BridgeBackend {
         if method_info == 0 {
             return Err(HookError::TargetUnavailable);
         }
+        // The bridge hydrates both the MethodAttributes static flag and the
+        // runtime `method_is_instance` predicate. They must agree before we
+        // trust either one as part of the native ABI.
+        if method.is_static == method.is_instance {
+            return Err(HookError::SignatureMismatch);
+        }
         Ok(MethodRef {
-            assembly: target.assembly.to_owned(),
-            namespace: target.namespace.to_owned(),
-            class: target.class.to_owned(),
-            method: target.method.to_owned(),
-            param_count: target.param_count,
+            assembly: assembly.file.clone(),
+            namespace: class.namespace.clone(),
+            class: class.name.clone(),
+            method: method.name.clone(),
+            param_count: u32::from(method.param_count),
+            is_static: method.is_static,
+            return_type: method.return_type.cpp_name(),
+            parameter_types: method
+                .args
+                .iter()
+                .map(|arg| arg.type_info.cpp_name())
+                .collect(),
+            is_generic: method.is_generic,
+            is_inflated: method.is_inflated,
             method_info,
             method_pointer_slot: method_info.wrapping_add(METHOD_POINTER_OFFSET),
         })
@@ -361,5 +378,26 @@ impl MethodResolver for BridgeBackend {
         // the process for its lifetime; alignment/liveness is re-verified by
         // `MethodPointerSlot::bind`.
         unsafe { Arc::new(RawSlotMemory::from_addr(method.method_pointer_slot)) }
+    }
+
+    fn entry_patch_memory(
+        &self,
+        method: &MethodRef,
+        replacement: usize,
+    ) -> Result<Arc<dyn SlotMemory>, HookError> {
+        #[cfg(target_arch = "aarch64")]
+        {
+            // SAFETY: the method reference was resolved from live, hydrated
+            // metadata of this process; the slot word and entry code are live
+            // for the process lifetime.
+            unsafe { Ok(Arc::new(EntryPatchMemory::new(method, replacement)?)) }
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let _ = (method, replacement);
+            Err(HookError::EntryPatchUnsupported(
+                "entry patches are only implemented for aarch64",
+            ))
+        }
     }
 }

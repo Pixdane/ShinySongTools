@@ -44,6 +44,8 @@ pub enum HookError {
     OwnershipDrift,
     #[error("method pointer slot is malformed (unreadable, null, or misaligned)")]
     SlotMalformed,
+    #[error("entry patch unsupported at this site: {0}")]
+    EntryPatchUnsupported(&'static str),
 }
 
 /// Failures of a single restore action. This is the return value of one
@@ -69,6 +71,8 @@ pub enum Il2CppError {
     ReadinessSymbolMissing(&'static str),
     #[error("bootstrap readiness deadline exceeded")]
     ReadinessDeadlineExceeded,
+    #[error("il2cpp class not found: {0}")]
+    ClassNotFound(String),
     #[error("il2cpp_domain_get returned null; one-shot bootstrap terminated")]
     DomainUnavailable,
     #[error("thread attach to the IL2CPP domain failed")]

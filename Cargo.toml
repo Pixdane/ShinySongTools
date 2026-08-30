@@ -3,9 +3,14 @@ resolver = "3"
 members = [
     "crates/core",
     "crates/debug",
+    "crates/recon",
+    "crates/translation_dump",
     "crates/unlock_fps",
     "crates/runtime",
     "crates/testing/fake-unity-framework",
+]
+exclude = [
+    "experiments/entry-patch",
 ]
 
 [workspace.package]
@@ -17,6 +22,8 @@ repository = "https://github.com/Pixdane/ShinySongTools"
 [workspace.dependencies]
 corelib = { package = "core", path = "crates/core" }
 debug = { path = "crates/debug" }
+recon = { path = "crates/recon" }
+translation_dump = { path = "crates/translation_dump" }
 unlock_fps = { path = "crates/unlock_fps" }
 
 bevy_ecs = { version = "0.19.1", default-features = false, features = ["std"] }

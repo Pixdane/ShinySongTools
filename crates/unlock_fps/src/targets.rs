@@ -12,6 +12,9 @@ pub const RATE_TARGET: TargetId = TargetId {
     class: "Application",
     method: "set_targetFrameRate",
     param_count: 1,
+    is_static: true,
+    return_type: "void",
+    parameter_types: &["int"],
 };
 
 /// Unity static `QualitySettings.set_vSyncCount(int)` target.
@@ -21,6 +24,9 @@ pub const VSYNC_TARGET: TargetId = TargetId {
     class: "QualitySettings",
     method: "set_vSyncCount",
     param_count: 1,
+    is_static: true,
+    return_type: "void",
+    parameter_types: &["int"],
 };
 
 #[repr(C)]
