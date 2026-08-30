@@ -1,7 +1,7 @@
 //! 无游戏 fixture — 惰性初始化机制（boxed system 首次运行前才 initialize）：
 //! Update system 引用 Startup 阶段才插入的 resource 正常解析；后注册插件
 //! 引用前序插件 Startup 产物同样成立。
-//! 对应 docs/plugin-system.md「惰性初始化规则」与 docs/2026-08-29-… §2.12 第 2 条。
+//! 对应 runtime crate Rustdoc「惰性初始化规则」与 runtime crate architecture record §2.12 第 2 条。
 
 mod common;
 

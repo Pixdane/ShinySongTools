@@ -1,4 +1,4 @@
-//! 无游戏 fixture — 调度全链（docs/runtime-crate.md 固定 callback 顺序）：
+//! 无游戏 fixture — 调度全链（runtime crate Rustdoc 固定 callback 顺序）：
 //! 1. Handoff 竞争窗口：Pending → 本次只调 original，publish 后下一帧领取；
 //! 2. 嵌套 callback：外层持有 App（Busy）时嵌套只调 original，不重入 driver；
 //! 3. failed 先行观察：Running 的 App 处置为 Exited；
@@ -6,7 +6,7 @@
 //!    LIFO 回滚在 per-system catch 之外产生帧级 unwind），TLS 保持 Busy；
 //! 5. 错误线程：身份判据不匹配 → TLS Unavailable + global failure；
 //! 6. 首帧 Startup 顺序与 RuntimeGate 最后开启；TLS 五态断言；
-//! 7. `this`/`method` 原样透传给 original（docs/runtime-crate.md 目标专用
+//! 7. `this`/`method` 原样透传给 original（runtime crate Rustdoc 目标专用
 //!    ABI：replacement 把 this、method 原样传给 original）；
 //! 8. 单插件 Startup 退役是 owner-local：RuntimeGate 照常最后开启，其余
 //!    插件继续跑 Update，App 不进入 Exited。

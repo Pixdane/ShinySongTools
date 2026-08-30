@@ -8,7 +8,7 @@
 //!
 //! 注意：bootstrap 的进程级静态 context 只能发布一次（OnceLock），因此本
 //! 文件内只有一个测试走到发布；其余测试全部在发布之前失败。
-//! 对应 docs/runtime-crate.md「readiness 阶梯」「启动失败与保活」与验证顺序
+//! 对应 runtime crate Rustdoc「readiness 阶梯」「启动失败与保活」与验证顺序
 //! §2.12 第 4 条。
 
 mod common;

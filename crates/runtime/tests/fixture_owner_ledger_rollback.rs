@@ -5,7 +5,7 @@
 //! 4. 逐 system panic：World 保活、该 owner 退役、其余 owner 继续、
 //!    Update 失败不移除资源。
 //!
-//! 对应 docs/plugin-system.md「局部回滚与 restore ledger」「AppWorld 共享与
+//! 对应 runtime crate Rustdoc「局部回滚与 restore ledger」「AppWorld 共享与
 //! panic 边界」与验证顺序 §2.12 第 2 条。
 
 mod common;

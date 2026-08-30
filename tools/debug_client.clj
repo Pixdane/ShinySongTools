@@ -1,4 +1,4 @@
-;; SCSP debug socket 客户端（docs/debug-diagnostics-logging.md）。
+;; SCSP debug socket 客户端（协议见 debug crate Rustdoc）。
 ;;
 ;; 协议：Unix domain socket + 4 字节 big-endian 长度前缀 + JSON-RPC 2.0 body。
 ;;

@@ -7,7 +7,7 @@
 # block must occur EXACTLY ONCE in the (already patched) source; any other
 # count is context drift and fails the build. Whitespace-sensitive.
 #
-# Semantics per docs/swift-entry.md:
+# Semantics per runtime crate Rustdoc, "Swift FFI 入口":
 #   1. AKPlugin.init() dispatches scsp_start to the main queue (Swift side
 #      never calls Rust on the init() stack; the Documents path is passed
 #      through withCString and copied by Rust before it returns).

@@ -30,6 +30,7 @@ Zig 负责描述完整构建图。Cargo 负责编译 Rust staticlib；Zig 负责
 - Swift/Rust FFI 源码
 - Rust runtime crate
 - `AKInterface.bundle` 的 `Info.plist`
+- 仓库内来源固定为 `resources/bundle/Info.plist`
 - PlayTools submodule 当前固定的 commit
 
 PlayTools submodule 是只读上游源码输入。构建不得直接修改 submodule 内的文件。
@@ -62,7 +63,7 @@ Cargo 步骤不参与 Zig 的文件缓存判断。每次执行 `zig build bundle
 panic = "unwind"
 ```
 
-scheduler 和插件错误隔离依赖 `catch_unwind`；不得为了缩小产物或其它优化把生产 staticlib 改为 `panic = "abort"`。`catch_unwind` 的具体能力边界见 [Runtime crate 设计](runtime-crate.md#panic-边界)。
+scheduler 和插件错误隔离依赖 `catch_unwind`；不得为了缩小产物或其它优化把生产 staticlib 改为 `panic = "abort"`。`catch_unwind` 的具体能力边界见 `runtime` crate Rustdoc 的“Panic 边界”。
 
 Cargo 产物位于：
 

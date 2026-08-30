@@ -1,4 +1,4 @@
-//! Typed debug topics (docs/debug-diagnostics-logging.md).
+//! Typed debug topics (debug crate Rustdoc).
 //!
 //! A plugin registers a main-domain topic with a typed handler; the
 //! registration wires the topic registry entry (name → owner gate readers,

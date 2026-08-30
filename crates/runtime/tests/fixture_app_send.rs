@@ -1,7 +1,7 @@
 //! 无游戏 fixture — App: Send（Send-only World 的 App 跨线程转移，模拟 Handoff）：
 //! App 从构造线程转移到另一线程后由该线程独占运行 driver。
-//! 对应 docs/runtime-architecture.md 不变量「App 是唯一组合根…始终为同一个
-//! Send 类型」与 docs/plugin-system.md「App: Send 可由编译期与无游戏 fixture 证明」。
+//! 对应 runtime crate Rustdoc 不变量「App 是唯一组合根…始终为同一个
+//! Send 类型」与 runtime crate Rustdoc「App: Send 可由编译期与无游戏 fixture 证明」。
 
 mod common;
 

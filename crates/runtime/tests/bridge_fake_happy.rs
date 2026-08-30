@@ -25,7 +25,7 @@ fn full_ladder_publishes_and_uses_the_validated_domain_pattern() {
     // Real il2cpp_domain_get calls: exactly ONE bootstrap probe (ladder 4)
     // plus ONE inside the bridge crate's cache hydration — the experiment
     // rule forbids pre-init POLLING, not post-gate internal re-reads (see
-    // docs/runtime-architecture.md readiness invariant).
+    // runtime crate Rustdoc readiness invariant).
     assert_eq!(
         common::domain_get_count(&handle),
         2,

@@ -1,4 +1,4 @@
-# Core crate 设计
+# Core crate
 
 状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `core`：平台基础 API、线程/域能力、callback-safe 原语和底层安全封装。它不了解 App、PluginManager、具体功能插件或 runtime bootstrap 流程。
 
@@ -25,7 +25,7 @@ core 提供不包含业务状态的基础类型：DataRoot、稳定 ID、错误�
 
 `MainThreadToken` 是不可跨线程的 capability。它只能由 runtime 在当前 callback frame 完成线程身份校验后通过受审阅的 unsafe 构造边界创建；需要 Unity 主线程的安全 API 必须显式要求该 token，不能只依赖调用者约定。
 
-```rust
+```rust,ignore
 pub struct MainThreadToken {
     _not_send_sync: PhantomData<Rc<()>>,
     _private: (),
@@ -42,7 +42,7 @@ v1 的平台判据固定为当前线程调用 `pthread_main_np() != 0`。runtime
 
 core 提供一个不承载失败原因的进程级总 gate。runtime 持有唯一控制 handle，功能 callback、debug route 与 I/O worker 只持有只读 handle：
 
-```rust
+```rust,ignore
 #[derive(Clone)]
 pub struct GateReader(Arc<AtomicBool>);
 
@@ -52,7 +52,7 @@ pub struct RuntimeGate(GateReader);
 - `GateReader::is_open` 以 Acquire 语义读取；runtime 关闭以 Release 语义写入。
 - RuntimeGate 初始关闭。首次 Startup driver 完整结束且 App 仍可运行时，runtime 最后开启它。
 - RuntimeGate 关闭后在当前进程内不得重新开启。它只表示整个 runtime 是否允许进入功能逻辑，不替代每个插件自己的 gate，也不编码启动中、失败原因或恢复结果等其它状态。
-- per-plugin `PluginGate` 复用同一 `GateReader` 类型；控制端归 plugin-system，语义见 plugin-system 分册。
+- per-plugin `PluginGate` 复用同一 `GateReader` 类型；控制端归 runtime，语义见 runtime crate 的“App 与 driver”文档。
 - 门与内存序的权威定义只有本节；其它分册引用，不重复展开。
 
 ## MethodPointer 底层封装
@@ -90,7 +90,7 @@ installed = true
 
 `Il2CppBackend` 负责保活 exact UnityFramework handle、通过固定版本 `il2cpp-bridge-rs` 加载的 IL2CPP API 表以及已经确认的 runtime/layout 身份。PlayCover 环境不能假定 `RTLD_DEFAULT` 可见性；runtime 必须把精确 UnityFramework handle 交给 `il2cpp-bridge-rs::api::load` 所需的 exact-handle resolver，不重新实现第二套导出表或高层初始化器。
 
-```rust
+```rust,ignore
 pub struct Il2CppRuntime(Arc<Il2CppBackend>);
 pub struct CallbackIl2Cpp(Arc<Il2CppBackend>);
 ```
@@ -99,13 +99,13 @@ pub struct CallbackIl2Cpp(Arc<Il2CppBackend>);
 
 `Il2CppBackend` 是否能够安全实现 `Send + Sync` 必须由具体字段、动态库 handle 生命周期和每个公开方法的线程约束证明，不能仅为满足 Resource bound 添加无依据的 `unsafe impl`。
 
-bootstrap worker 使用 IL2CPP API 前必须遵守显式 attach 生命周期：等待 domain 非空（阶梯 3 的探测单次调用，见 runtime-crate 分册 readiness 阶梯），检查当前 worker 是否已附着，只在未附着时调用 thread attach（使用捕获的 domain，attach 自身不再重读 domain_get），并用 RAII guard 仅 detach 本次自己建立的 attachment。bridge crate 的 cache hydration 内部会重读 domain_get——post-gate 重读已被两次实机 A/B 实证无害，由 bridge_fake_happy fixture 固化。callback 侧 capability 不得隐式 attach/detach 任意线程。
+bootstrap worker 使用 IL2CPP API 前必须遵守显式 attach 生命周期：等待 domain 非空（单次探测规则见 runtime crate 的“Bootstrap 与 scheduler”），检查当前 worker 是否已附着，只在未附着时调用 thread attach（使用捕获的 domain，attach 自身不再重读 domain_get），并用 RAII guard 仅 detach 本次自己建立的 attachment。bridge crate 的 cache hydration 内部会重读 domain_get——post-gate 重读已被两次实机 A/B 实证无害，由 bridge_fake_happy fixture 固化。callback 侧 capability 不得隐式 attach/detach 任意线程。
 
 ## Callback-safe 原语
 
 core 提供可由插件 CallbackSiteContainer 与跨域 route 组合使用的最小并发原语。callback 侧操作必须有界且永不阻塞；callback 热路径不得分配、不得调用插件任意代码。
 
-```rust
+```rust,ignore
 // 语义在注册时按类型选择，三种 mailbox：
 pub struct LatestCell<T>(/* 单格，新值覆盖旧值 */);            // T: CallbackPayload
 pub struct BoundedQueue<T, const N: usize>(/* ArrayQueue */); // T: CallbackPayload
@@ -127,7 +127,7 @@ pub trait CallbackPayload: Copy + Send + Sync + 'static {}
 
 core 使用 `tracing` macros/fields 发出普通执行域的结构化事件，但不安装 subscriber 或选择 sink。runtime 创建并保活 scoped `tracing::Dispatch`，v1 输出到 Apple Unified Logging。core 另外定义固定大小、`Copy`、无任意 Drop 的 `CompactEvent` 及只暴露 `try_emit` 的 `CallbackObservability` producer；callback/scheduler 热路径通过进程级有界队列把记录交给 runtime-owned drain worker，再转换为正常 tracing event。
 
-```rust
+```rust,ignore
 #[derive(Clone, Copy)]
 pub struct CompactEvent {
     code: CompactEventCode,
@@ -139,7 +139,7 @@ pub struct CompactEvent {
 }
 ```
 
-`CallbackObservability` 是基础设施 handle，不是 plugin message route：它不读取 RuntimeGate/PluginGate，不访问 App/World，不因插件退役停止记录，也不允许 callback 携带动态字符串或任意插件 payload。queue 满只增加 dropped counter。事件代码、字段与 drain worker 的完整边界见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)。
+`CallbackObservability` 是基础设施 handle，不是 plugin message route：它不读取 RuntimeGate/PluginGate，不访问 App/World，不因插件退役停止记录，也不允许 callback 携带动态字符串或任意插件 payload。queue 满只增加 dropped counter。事件代码、字段与 drain worker 的完整边界见 `debug` crate 的 Rustdoc。
 
 ## core 不保证的事项
 

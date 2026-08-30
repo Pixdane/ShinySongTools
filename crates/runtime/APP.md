@@ -1,12 +1,12 @@
-# Runtime：App 与 driver
+# App 与 driver
 
-状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `runtime` 的 App / PluginManager / driver 部分：组合根、owner scope、固定 driver、惰性初始化与局部回滚。bootstrap worker、scheduler、Handoff 与 `scsp_start` 见 [Runtime：bootstrap 与 scheduler](runtime-crate.md)。
+状态：v2 设计（2026-08-29 修订）。本文定义 `runtime` crate 的 App / PluginManager / driver 部分：组合根、owner scope、固定 driver、惰性初始化与局部回滚。bootstrap worker、scheduler、Handoff 与 `scsp_start` 见本 crate Rustdoc 的“Bootstrap 与 scheduler”。
 
 ## App 是组合根
 
 `App` 从 bootstrap worker 构造到主线程运行始终是同一个 `Send` 类型，不引入 `PreparedApp`，也不使用本身为 `!Send` 的 `bevy_app::App`：
 
-```rust
+```rust,ignore
 pub struct App {
     world: bevy_ecs::World,
     core: AppCore,
@@ -24,7 +24,7 @@ App 在 worker 阶段只执行线程无关的 build；经 Handoff 后由游戏�
 
 `PluginManager` 从 `App::new` 起就是 App 内部成员。`App::add_plugin` 为每个插件建立唯一 owner scope，并在 scope 内调用 `Plugin::build`。每个 owner 保留的运行期记录：
 
-```rust
+```rust,ignore
 struct PluginRecord {
     state: PluginState,                 // Active | Retired（最小逻辑状态）
     startup: Vec<BoxedStartupSystem>,
@@ -98,7 +98,7 @@ v1 不构建 system dependency graph，不提供 before/after 约束。这里的
 
 restore action 只登记确实修改外部状态、以后需要恢复的操作：
 
-```rust
+```rust,ignore
 enum RestoreAction {
     AnyThread(Box<dyn FnOnce() -> Result<(), RestoreError> + Send>),
     MainThread(Box<dyn FnOnce(&MainThreadToken) -> Result<(), RestoreError> + Send>),

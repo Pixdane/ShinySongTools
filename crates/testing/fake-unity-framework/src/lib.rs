@@ -1,24 +1,4 @@
-//! No-game fake UnityFramework for `core`'s bridge adapter fixtures.
-//!
-//! Ported from the scsp-playcover-hook experiment `il2cpp-bridge-rs-usage`
-//! (fake-runtime crate) and extended for the production bootstrap: a second
-//! `mscorlib` image so ladder 6's `cache::assembly("mscorlib")` succeeds, and
-//! an `il2cpp_domain_get` call counter so fixtures can document the real
-//! post-gate call pattern.
-//!
-//! Behavior knobs (read at call time from the process environment):
-//! * `SCSP_FAKE_CACHE_FAIL`  — `domain_get_assemblies` returns null (cache
-//!   hydration fails);
-//! * `SCSP_FAKE_ATTACH_FAIL` — `il2cpp_thread_attach` returns null;
-//! * `SCSP_FAKE_TARGET_DRIFT` — the resolved method is named `Other`.
-//!
-//! Introspection exports (not part of the IL2CPP surface):
-//! * `scsp_fixture_domain_get_count` — how many times the process really
-//!   called `il2cpp_domain_get`;
-//! * `scsp_fixture_detach_count` — how many attachments were detached.
-//! * `scsp_fixture_criware_ready_count` — how many times the production
-//!   CRIWARE completion predicate was called.
-
+#![doc = include_str!("../README.md")]
 // The exported functions are a C ABI surface (IL2CPP stand-ins), not a Rust
 // API; per-function `# Safety` docs would be noise on a fake.
 #![allow(clippy::missing_safety_doc)]

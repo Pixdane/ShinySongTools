@@ -7,7 +7,7 @@
 //! 5. runtime.plugins 自省：插件列表含 debug 与 unlock_fps；
 //! 6. 全链对 mock target 完成（无游戏接触）。
 //!
-//! 对应 docs/plugin-api.md「功能模式示例：FPS 解锁」与 debug 分册。
+//! 对应 core crate Rustdoc「功能模式示例：FPS 解锁」与 debug 分册。
 
 mod common;
 

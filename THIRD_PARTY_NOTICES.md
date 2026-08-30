@@ -26,4 +26,4 @@ il2cpp-bridge-rs is licensed under the MIT license. Its exact version,
 upstream repository, and license are recorded here because the runtime pins
 the dependency and its behavior (export set, cache initialization, internal
 domain reads) is part of the validated evidence chain described in
-`docs/`.
+the crate-level Rustdoc.

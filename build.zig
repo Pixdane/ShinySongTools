@@ -128,7 +128,7 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
     assemble_run.addArgs(&.{"--exe"});
     assemble_run.addFileArg(bundle_exe);
     assemble_run.addArgs(&.{"--plist"});
-    assemble_run.addFileArg(b.path("bundle/Info.plist"));
+    assemble_run.addFileArg(b.path("resources/bundle/Info.plist"));
     assemble_run.addArgs(&.{"--out-dir"});
     const unsigned_bundle = assemble_run.addOutputDirectoryArg("AKInterface.bundle");
 

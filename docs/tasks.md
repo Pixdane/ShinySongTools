@@ -301,7 +301,7 @@ bb bootstrap-probe patch --expected-executable-sha <sha256>
 
 ## `debug`
 
-调用运行时 debug socket（JSON-RPC 2.0 over Unix domain socket，协议见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)）：
+调用运行时 debug socket（JSON-RPC 2.0 over Unix domain socket，协议见 `debug` crate Rustdoc）：
 
 ```sh
 bb debug runtime.plugins

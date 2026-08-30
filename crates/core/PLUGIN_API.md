@@ -1,4 +1,4 @@
-# Plugin API 设计
+# Plugin API
 
 状态：v2 设计（2026-08-29 修订）。本文定义功能插件作者可见的公共 API，现由 `core::plugin_api` 承载。它不暴露 PluginManager、driver、Handoff、ledger 或 runtime bootstrap 内部实现。
 
@@ -21,7 +21,7 @@ plugin-defined CallbackSiteContainer 保存 Hook callback 可见状态
 
 ## Plugin 入口与错误类型
 
-```rust
+```rust,ignore
 pub trait Plugin: Send + Sync + 'static {
     fn build(&self, ctx: &mut AppCtx<'_>) -> Result<(), PluginError>;
 }
@@ -59,7 +59,7 @@ pub enum PluginError {
 
 ## Resource API：直接插入 + ledger 记账
 
-```rust
+```rust,ignore
 #[derive(Resource)]
 struct FpsState { current: FpsSetting }
 ```
@@ -75,7 +75,7 @@ struct FpsState { current: FpsSetting }
 
 system 的第一个参数是 phase context，phase 由类型区分：
 
-```rust
+```rust,ignore
 pub struct StartupCtx<'a> {
     pub main: &'a MainThreadToken,
     pub reg: &'a mut StartupRegistrar,   // 只提供登记 restore action 的窄 API
@@ -90,7 +90,7 @@ ctx.add_startup_system(startup)?;
 ctx.add_update_system(update)?;
 ```
 
-```rust
+```rust,ignore
 fn startup(ctx: StartupCtx<'_>, config: Res<FpsConfig>) -> Result<(), PluginError> { /* ... */ }
 
 fn update(ctx: UpdateCtx<'_>, mut state: ResMut<FpsState>) -> Result<(), PluginError> { /* ... */ }
@@ -107,7 +107,7 @@ fn update(ctx: UpdateCtx<'_>, mut state: ResMut<FpsState>) -> Result<(), PluginE
 
 callback 与主线程分属两个执行域，World 不能跨域共享。插件用统一 API 声明 route，语义与方向都是类型的一部分：
 
-```rust
+```rust,ignore
 // main → callback：Update system 发送，Hook callback 读取
 let (tx, rx) = ctx.main_to_callback::<FpsSetting>(Mailbox::latest())?;
 // tx: MainWriter<FpsSetting, Latest>     —— 在 Update system 内以 &UpdateCtx 调用
@@ -132,7 +132,7 @@ let (tx, rx) = ctx.main_to_callback::<DebugRequest>(Mailbox::shared_latest())?;
 
 目标抽象为 `HookTarget`，ABI 与校验谓词绑定在类型上；每个目标一个宏生成的进程期静态 site；安装流程用 typestate 表达：
 
-```rust
+```rust,ignore
 pub trait HookTarget: 'static {
     const TARGET: TargetId;                 // assembly/namespace/class/name/param_count
     type Original: Copy;                    // typed fn pointer（含隐式 MethodInfo 参数）
@@ -145,7 +145,7 @@ define_hook_site!(FPS_TARGET_RATE_SITE: HookSite<SetTargetFrameRateTarget, FpsSi
 
 注册 API（AppCtx 上）：
 
-```rust
+```rust,ignore
 let sites: Arc<FpsSites> = ctx.register_container(FpsSites { setting: rx, /* ... */ })?;
 
 ctx.hook(FPS_TARGET_RATE_SITE)          // HookBuilder<T, Unpublished>
@@ -159,7 +159,7 @@ ctx.hook(FPS_TARGET_RATE_SITE)          // HookBuilder<T, Unpublished>
 - 静态槽一旦发布便占用该目标直到进程退出；即使 CAS 安装失败、Hook 已恢复或插件退役，也不清空或复用。一个目标一个静态 site：不支持同目标多实例、重复注册、重装、slot chaining 或物理卸载。
 - callback 上下文形状：
 
-```rust
+```rust,ignore
 pub struct Callback<'a, T: HookTarget, C> {
     // gates 已由 wrapper 检查；任一 gate 关闭时 wrapper 直接透传 original，handler 不可达
 }
@@ -177,7 +177,7 @@ impl<'a, T, C> Callback<'a, T, C> {
 
 插件为自己的开发调试注册 typed topic；执行域决定 handler 的运行位置：
 
-```rust
+```rust,ignore
 trait DebugTopic: 'static {
     const NAME: &'static str;
     type Request: serde::de::DeserializeOwned + Send + 'static;
@@ -194,7 +194,7 @@ ctx.register_callback_debug::<FpsProbe>()?;
 
 - 注册自动完成三件事：向 AppCore 的 topic registry 登记（name → owner/域/vtable/gate readers）、生成本 topic 专属的跨域 mailbox（callback 域，`shared_latest` 语义）、把 handler/relay system 自动登记为本插件的 Update system。插件作者只写 handler 本体。
 - 一个 topic 一个 owner、一个 handler、一个执行域；重名注册使当前插件 build 失败。
-- dispatch 流、pending/correlation、错误映射与运行时自省 topic 见 [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md)。
+- dispatch 流、pending/correlation、错误映射与运行时自省 topic 见 `debug` crate 的 Rustdoc。
 
 ## 功能模式示例：FPS 解锁（`unlock_fps` crate）
 

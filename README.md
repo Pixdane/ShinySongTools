@@ -14,14 +14,23 @@ git submodule update --init --recursive
 
 第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## 开发文档
+## Rust 文档
+
+架构、公共 API、生命周期和安全边界归属到各 crate 的顶层 Rustdoc：
+
+- [`corelib`](crates/core/README.md)：平台原语与 plugin API。
+- [`debug`](crates/debug/README.md)：Debug control plane 与 Observability。
+- [`unlock_fps`](crates/unlock_fps/README.md)：FPS 功能插件。
+- [`shiny_song_tools`](crates/runtime/README.md)：App、bootstrap、scheduler 与 Swift FFI。
+- [`fake-unity-framework`](crates/testing/fake-unity-framework/README.md)：无游戏测试 fixture。
+
+生成完整文档：
+
+```sh
+cargo doc --workspace --no-deps
+```
+
+非 Rust API 的操作文档继续保留在仓库根目录：
 
 - [Bundle 编译流程](docs/bundle-build.md)
-- [Swift 入口行为](docs/swift-entry.md)
-- [运行时架构总览](docs/runtime-architecture.md)
-  - [Core crate 设计](docs/core-crate.md)
-  - [Plugin API 设计](docs/plugin-api.md)
-  - [Plugin system 设计](docs/plugin-system.md)
-  - [Runtime crate 设计](docs/runtime-crate.md)
-  - [Debug、Diagnostics 与 Logging](docs/debug-diagnostics-logging.md)
 - [Babashka Tasks](docs/tasks.md)

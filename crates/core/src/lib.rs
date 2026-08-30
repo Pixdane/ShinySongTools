@@ -1,19 +1,6 @@
-//! Platform primitives for the Shiny Song Tools runtime.
-//!
-//! `core` sits at the bottom of the dependency graph. It provides the
-//! thread capability ([`MainThreadToken`]), process gates, the MethodPointer
-//! slot wrapper, callback-safe containers, compact events, the plugin error
-//! chain, and the IL2CPP backend abstraction. It knows nothing about `App`,
-//! plugins, or the bootstrap process.
-//!
-//! The IL2CPP backend exists in two shapes behind one trait pair
-//! ([`backend::Il2CppApi`] + [`backend::MethodResolver`]):
-//!
-//! * [`il2cpp_bridge::BridgeBackend`] — the production backend, a thin
-//!   adapter over the pinned `il2cpp-bridge-rs 0.1.4` crate driven by the
-//!   exact UnityFramework handle. Only reachable on the live path.
-//! * Mock implementations inside the no-game fixtures, which drive the same
-//!   protocol without a game process.
+#![doc = include_str!("../README.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../PLUGIN_API.md")]
 
 pub mod backend;
 pub mod base;

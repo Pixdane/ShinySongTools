@@ -1,24 +1,4 @@
-//! Debug control plane as an ordinary plugin crate.
-//!
-//! JSON-RPC 2.0 over a Unix domain socket (docs/debug-diagnostics-logging.md):
-//! length-prefixed frames (4-byte big-endian + UTF-8 JSON), single client,
-//! `0600` socket permissions, stale-socket unlink at build, transport
-//! lifecycle to process exit. Requests decode and route through the typed
-//! topic registry (main domain); built-in `runtime.*` introspection topics
-//! read the runtime snapshot.
-//!
-//! Session hygiene: every request carries the connection generation it
-//! arrived on and every response carries it back — a request or answer whose
-//! connection is gone is dropped instead of being mixed into the next
-//! session. The transport queues are bounded (overflow answers `queue_full`
-//! on the request side, drops the newest response on the write side), so a
-//! stalled or malicious client cannot grow runtime memory without bound.
-//!
-//! Dispatch flow: this plugin's Update system (registered like any plugin
-//! system) routes wire requests into topic channels and drains responses
-//! back to the wire; the owner's handler systems do the typed work. Gates:
-//! every route requires the runtime gate AND the owner plugin gate; after a
-//! global failure all new requests answer `runtime_unavailable`.
+#![doc = include_str!("../README.md")]
 
 use corelib::debug::{
     DebugIntrospection, DebugResponse, DebugServerError, DebugTopicLookup, DebugWireErrorCode,

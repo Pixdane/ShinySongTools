@@ -9,7 +9,7 @@
 //! 能力 token 约束：callback 侧操作要求 &CallbackCtx（仅 dispatch 路径可
 //! 得），main 侧要求 &UpdateCtx（仅 Update system 可得）。
 //!
-//! 对应 docs/plugin-api.md「跨域 message」与 core 分册三种 mailbox。
+//! 对应 core crate Rustdoc「跨域 message」与 core 分册三种 mailbox。
 
 mod common;
 

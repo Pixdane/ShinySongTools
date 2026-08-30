@@ -1,6 +1,6 @@
 //! Internal host facade and boxed-system plumbing.
 //!
-//! [`AppCtx`] is a thin wrapper over `&mut dyn PluginHost`; the runtime
+//! [`crate::AppCtx`] is a thin wrapper over `&mut dyn PluginHost`; the runtime
 //! implements [`PluginHost`] once per owner scope. Generic operations are
 //! materialized into boxed closures by `AppCtx` so the host stays
 //! object-safe.

@@ -1,4 +1,4 @@
-//! 无游戏 fixture — callback 域 debug topic 端到端（docs/debug-diagnostics-logging.md
+//! 无游戏 fixture — callback 域 debug topic 端到端（debug crate Rustdoc
 //! 「callback 域数据通路」）：
 //! 1. `register_callback_debug` 自动登记 relay system + 容器端点；
 //! 2. dispatch → relay 投递请求到容器 SharedSlot（每帧至多一个、不覆盖）；

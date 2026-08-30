@@ -1,4 +1,4 @@
-//! Process-level observability root (docs/debug-diagnostics-logging.md).
+//! Process-level observability root (debug crate Rustdoc).
 //!
 //! * scoped `tracing::Dispatch` established in every runtime-owned execution
 //!   root (`scsp_start` body, bootstrap worker, outer scheduler frame, plugin

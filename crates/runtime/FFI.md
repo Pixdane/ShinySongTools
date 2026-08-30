@@ -1,4 +1,4 @@
-# Swift 入口行为
+# Swift FFI 入口
 
 `AKInterface.bundle` 的 principal class 是 `AKPlugin`。PlayTools 加载 bundle 后创建 `AKPlugin`，正式项目在其 `init()` 中将控制交给 Rust，同时保留上游 PlayTools 的窗口与输入实现。
 

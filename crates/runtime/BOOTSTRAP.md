@@ -1,6 +1,6 @@
-# Runtime：bootstrap 与 scheduler
+# Bootstrap 与 scheduler
 
-状态：v2 设计（2026-08-29 修订）。本文定义概念 crate `runtime` 的 FFI 入口、bootstrap worker、readiness 阶梯、Unity 主线程 scheduler、Handoff、TLS 与 runtime 级失败边界。App / PluginManager / driver 见 [Runtime：App 与 driver](plugin-system.md)。
+状态：v2 设计（2026-08-29 修订）。本文定义 `runtime` crate 的 FFI 入口、bootstrap worker、readiness 阶梯、Unity 主线程 scheduler、Handoff、TLS 与 runtime 级失败边界。App / PluginManager / driver 见本 crate Rustdoc 的“App 与 driver”。
 
 ## 依赖与职责
 
@@ -94,7 +94,7 @@ bootstrap worker
 
 ## Handoff 同步
 
-```rust
+```rust,ignore
 struct Handoff {
     app: Mutex<Option<Box<App>>>,
 }
@@ -110,7 +110,7 @@ worker 的 `publish` 加锁把 `None` 改为 `Some`，只允许一次；重复�
 
 ## SchedulerContext 发布顺序
 
-```rust
+```rust,ignore
 static SCHEDULER: OnceLock<SchedulerContext> = OnceLock::new();
 
 struct SchedulerContext {
@@ -132,7 +132,7 @@ original LateUpdate pointer 只由 SchedulerHook 持有；callback 始终通过 
 
 ## 主线程 TLS
 
-```rust
+```rust,ignore
 enum AppSlot {
     AwaitingHandoff,
     Running(Box<App>),
@@ -196,7 +196,7 @@ global failure 在当前进程不可恢复：不自动重试启动，不重新�
 
 每次外层 replacement 构造一个只存在于当前 callback 栈上的 frame：
 
-```rust
+```rust,ignore
 enum OriginalPhase {
     BeforeOriginal,
     CallingOriginal,
@@ -225,7 +225,7 @@ panic 恢复路径只使用已审阅的非 panic 操作；插件/effect restore 
 
 第一版只接受实验验证过的精确目标：`UniRx.dll / UniRx / MainThreadDispatcher / LateUpdate / 0`。构造 SchedulerHook 前必须确认实例方法、显式参数为零、返回 `System.Void`、MethodInfo 非空，并匹配受支持 runtime/layout 身份。
 
-```rust
+```rust,ignore
 #[repr(C)]
 struct Il2CppObjectOpaque { _private: [u8; 0] }
 

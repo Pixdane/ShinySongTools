@@ -1,4 +1,4 @@
-//! One-shot cross-thread ownership slot for the `App` (docs/runtime-crate.md
+//! One-shot cross-thread ownership slot for the `App` (runtime crate Rustdoc
 //! Handoff 同步).
 //!
 //! The worker publishes at most once; scheduler callbacks only `try_take`.

@@ -1,9 +1,4 @@
-//! Production Unity FPS control plugin.
-//!
-//! The plugin owns one static hook site per Unity setter. Resolution is by
-//! [`TargetId`] identity through the runtime's method resolver; no process
-//! address is hard-coded here. Main-domain `unlock_fps.get`/`unlock_fps.set` topics update
-//! an atomic target and a latest-value route consumed by the callback domain.
+#![doc = include_str!("../README.md")]
 
 use bevy_ecs::prelude::Resource;
 use corelib::debug::{DebugHandlerError, MainDebugTopic};

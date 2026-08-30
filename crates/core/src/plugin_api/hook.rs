@@ -4,7 +4,7 @@
 //! predicates are bound to the type and owned by the plugin author (trusted
 //! boundary: plugins and runtime compile in the same repository and are
 //! reviewed by the same person). Each target has exactly one process-lifetime
-//! static site created by [`define_hook_site!`]. The builder typestate
+//! static site created by [`crate::define_hook_site!`]. The builder typestate
 //! guarantees that a [`HookSite`] is fully published (typed original slot,
 //! both gate readers, container `Arc`, replacement pointer) before
 //! `install` — the only installation path — can run.

@@ -5,7 +5,7 @@
 //! 重复 install 与重复 restore 被拒）。
 //! 另有 install/restore 过渡窗口测试：dispatch 以 slot 实际值为唯一事实
 //! 来源，CAS→flag 窗口内的并发调用必须透传 original（不得跳过）。
-//! 对应 docs/plugin-api.md「Hook typestate」与验证顺序 §2.12 第 3 条。
+//! 对应 core crate Rustdoc「Hook typestate」与验证顺序 §2.12 第 3 条。
 
 mod common;
 

@@ -68,7 +68,7 @@ impl TopicRegistry {
 
     /// Retire one owner's topics: every queued-but-undelivered request is
     /// answered `plugin_unavailable` so wire clients never hang on a retired
-    /// plugin (docs/debug-diagnostics-logging.md 局部回滚). In-flight
+    /// plugin (debug crate Rustdoc 局部回滚). In-flight
     /// requests already owned by handler/relay systems are not forcibly
     /// cancelled; their systems stop running with the owner.
     pub(crate) fn fail_pending_requests(&self, owner: corelib::OwnerId) {

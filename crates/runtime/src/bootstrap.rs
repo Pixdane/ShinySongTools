@@ -1,6 +1,6 @@
 //! Bootstrap: readiness ladder, App construction, scheduler publication.
 //!
-//! Ladder (docs/runtime-crate.md):
+//! Ladder (runtime crate Rustdoc):
 //!   1. image identity — pollable, non-IL2CPP (bounded deadline): the
 //!      production poll lives in [`await_unity_framework`], which acquires
 //!      and keeps alive the exact handle before `run_bootstrap` verifies the
@@ -46,7 +46,7 @@ pub const SCHEDULER_TARGET: TargetId = TargetId {
     param_count: 0,
 };
 
-/// Production ladder-1 parameters (docs/runtime-crate.md: 具体总超时与
+/// Production ladder-1 parameters (runtime crate Rustdoc: 具体总超时与
 /// backoff 属于实现参数，必须有界且可测试).
 pub const IMAGE_POLL_DEADLINE: Duration = Duration::from_secs(120);
 pub const IMAGE_POLL_BACKOFF: Duration = Duration::from_millis(250);
@@ -77,7 +77,7 @@ pub struct BootstrapDeps {
     pub resolver: Arc<dyn MethodResolver>,
     pub data_root: DataRoot,
     /// Typed configuration parsed by `scsp_start` before the worker spawned
-    /// (docs/runtime-crate.md scsp_start sequence); fail-closed already
+    /// (runtime crate Rustdoc scsp_start sequence); fail-closed already
     /// applied by `load_config`.
     pub config: RuntimeConfig,
     pub thread_check: ThreadIdentityCheck,

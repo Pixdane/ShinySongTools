@@ -1,7 +1,7 @@
-# 架构审查与类型驱动重设计提案
+# 架构审查与类型驱动重设计记录
 
 日期：2026-08-29
-性质：对 `docs/` 现行 v1 设计（runtime-architecture / core-crate / plugin-api / plugin-system / runtime-crate / debug-diagnostics-logging 各分册）的审查结论 + 一套替代架构提案。
+性质：对当时 `docs/` 中 v1 设计（runtime-architecture / core-crate / plugin-api / plugin-system / runtime-crate / debug-diagnostics-logging 各分册）的审查结论 + 一套替代架构提案；分册现已归入各 crate Rustdoc。
 证据输入：`~/Documents/scsp-playcover-hook` 的 research/01–03、lateupdate-methodpointer-poc A/B 实测记录、il2cpp-bridge-rs 适配实验、openspec specs。
 
 ---
@@ -95,7 +95,7 @@ swift/  patches/   carrier 与构建侧（bundle-build.md / swift-entry.md 不�
 
 ### 2.2 Core：capability 与原语
 
-```rust
+```rust,ignore
 // —— 线程能力（继承现设计）——
 pub struct MainThreadToken {          // !Send + !Sync，构造受审阅 unsafe，无 Clone/Copy
     _not_send_sync: PhantomData<Rc<()>>,
@@ -122,7 +122,7 @@ pub struct BoundedQueue<T: Copy + Send + Sync, const N: usize> { /* crossbeam Ar
 
 目标抽象为 `HookTarget`，ABI 与校验谓词绑定在类型上；每个目标一个宏生成的 `'static` site；安装流程用 typestate 状态机表达：
 
-```rust
+```rust,ignore
 pub trait HookTarget: 'static {
     const TARGET: TargetId;                      // assembly/namespace/class/name/param_count
     type Original: Copy;                         // typed fn pointer，如 LateUpdateFn
@@ -152,7 +152,7 @@ callback 侧约束不变：callback 不碰 App/World/TLS；不阻塞、无界分
 
 不再用 Bevy 的 `InRef`/`InMut` 输入 tuple（A3），SCSP 定义自己的 phase context 作为 boxed system 的输入类型：
 
-```rust
+```rust,ignore
 pub struct StartupCtx<'a> { pub main: &'a MainThreadToken, pub reg: &'a mut StartupRegistrar }
 pub struct UpdateCtx<'a>  { pub main: &'a MainThreadToken }
 
@@ -176,7 +176,7 @@ phase 约束由 `BoxedSystem<P>` 的类型参数承担——**把 Startup system
 
 ### 2.5 跨域 message：方向 branded endpoint + 语义类型选择
 
-```rust
+```rust,ignore
 pub trait CallbackPayload: Copy + Send + Sync + 'static {}   // 仅 callback 侧端点要求
 
 pub trait Domain: 'static {}                                  // sealed
@@ -223,7 +223,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 
 ### 2.8 Config 与 DataRoot（F3/U5 修正）
 
-```rust
+```rust,ignore
 #[derive(Deserialize)] pub struct RuntimeConfig {
     #[serde(default)] pub debug: DebugConfig,       // { enabled: bool } 默认 false
 }
@@ -235,7 +235,7 @@ DebugDispatch 不再是内建阶段——它是 debug 插件的 Update system（
 
 ### 2.9 错误体系统一（A1/U2 修正）
 
-```rust
+```rust,ignore
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
     #[error("resource conflict: {0}")]            ResourceConflict(&'static str),
@@ -289,7 +289,7 @@ pub enum RestoreError { OwnershipLost, Failed }   // 继承现设计语义
 
 ## 非目标
 
-- 不改变 bundle-build / swift-entry 两篇的任何决定（它们与实验证据完全一致，包括三个窗口安全修复——实验已证明缺失会导致 SIGTRAP）。
+- 不改变 bundle build 与 Swift FFI 入口的任何决定（它们与实验证据完全一致，包括三个窗口安全修复——实验已证明缺失会导致 SIGTRAP）。
 - 不重新讨论注入路线、AppGuard 对抗、功能插件实现细节。
 - 不引入 Bevy Schedule executor、entity/component gameplay model、动态 dylib 插件、热重载（维持现设计的非目标）。
 
@@ -297,7 +297,7 @@ pub enum RestoreError { OwnershipLost, Failed }   // 继承现设计语义
 
 本提案已按以下决策落进各分册（v2 修订）：
 
-1. **落地方式**：修订现有 docs/（已完成；本提案保留为决策与审查记录）。
+1. **落地方式**：修订现有设计分册；分册现由各 crate 顶层 Rustdoc 收录，本提案保留为决策与审查记录。
 2. **产品定位**：个人使用的插件平台。v1 = 正确的插件系统 + FPS 解锁测试插件 + 配置文件 + Debug socket。翻译/贴图/相机等按同一 API 后续立项；翻译复用 SCSPTranslationData 社区格式。
 3. **Debug**：插件化（DebugPlugin）+ JSON-RPC 2.0 over UDS；保留 callback 域；dispatch 走用户提议的流程——request 先落主线程（DebugPlugin Update），按 topic 分发给 owner 插件的 debug handler system（自动登记的普通 Update system，解决审查 U4），callback 域再经容器内 SharedSlot 转发，响应沿原路返回。新增运行时自省 topic（`runtime.plugins` / `runtime.gates` / `runtime.info`）。Debug socket 定位为插件开发调试工具。
 4. **消息语义**：Latest / Bounded\<N\> 双语义 + `shared_latest`（`Arc<T>` 单槽）承载 callback 域调试的有主 payload。
@@ -305,4 +305,4 @@ pub enum RestoreError { OwnershipLost, Failed }   // 继承现设计语义
 6. **插件生态**：只服务个人开发——hook 目标（ABI wrapper）由插件作者自定义（受信任边界），plugin API 不承诺 semver；不做插件脚手架/模板交付物。
 7. **控制面**：配置文件（`scsp.toml`，fail-closed）+ debug socket；无 overlay GUI、无渲染/输入子系统、无第三执行域。
 
-审查结论与提案正文中的 F1（`il2cpp_domain_get` 单次调用）、F2（staged 语义矛盾）、F3（config 悬空引用）与 C1–C5、O1–O4、U1–U6、W1、A1–A5 的处置见各分册 v2 内容；本提案其余章节保持原样作为依据。
+审查结论与提案正文中的 F1（`il2cpp_domain_get` 单次调用）、F2（staged 语义矛盾）、F3（config 悬空引用）与 C1–C5、O1–O4、U1–U6、W1、A1–A5 的处置见各 crate Rustdoc 中的 v2 内容；本提案其余章节保持原样作为依据。

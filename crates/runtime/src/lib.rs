@@ -1,19 +1,12 @@
-//! Shiny Song Tools runtime.
-//!
-//! This crate carries two halves of the design:
-//!
-//! * **App / driver** (this phase): the `Send` composition root, the
-//!   owner-scoped [`PluginManager`] with its resource ledger and restore
-//!   actions, and the fixed driver (MessageMaintenance → CommandDrain →
-//!   plugin Update). See `docs/plugin-system.md`.
-//! * **bootstrap / scheduler** (next phase): `scsp_start`, the bootstrap
-//!   worker, the readiness ladder, `Handoff`, the Unity main-thread TLS, and
-//!   the `SchedulerFrame` panic boundary. See `docs/runtime-crate.md`.
-//!
-//! The staticlib target (`libshiny_song_tools.a`) is produced by this crate
-//! directly: the design collapses the former plugin-system/runtime split
-//! into one package, and a separate FFI crate would add a link unit without
-//! adding a consumer boundary.
+#![doc = include_str!("../README.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../APP.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../BOOTSTRAP.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../FFI.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../ARCHITECTURE.md")]
 
 pub mod app;
 pub mod bootstrap;

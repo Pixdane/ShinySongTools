@@ -1,4 +1,4 @@
-# Debug、Diagnostics 与 Logging
+# Debug control plane 与 Observability
 
 状态：v2 设计（2026-08-29 修订）。
 
@@ -107,7 +107,7 @@ request（JSON-RPC 2.0）：
 
 进程内部使用强类型 topic；wire 层映射到稳定 method 名：
 
-```rust
+```rust,ignore
 trait DebugTopic: 'static {
     const NAME: &'static str;                 // wire method，如 "unlock_fps.set"
     type Request: serde::de::DeserializeOwned + Send + 'static;

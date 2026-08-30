@@ -1,13 +1,13 @@
 //! Unity main-thread scheduler: TLS five states, `SchedulerFrame`, the fixed
 //! callback order, and the global-failure publication order.
 //!
-//! Invariants (docs/runtime-architecture.md, docs/runtime-crate.md):
+//! Invariants are defined by the runtime crate Rustdoc.
 //!
 //! * `MainThreadToken` is constructed per frame only after the thread
 //!   identity predicate passes, and only its short borrow enters systems;
 //! * global failure publishes `RuntimeGate.close()` (Release) BEFORE
 //!   `failed.store(true, Release)`;
-//! * `original` is called exactly once per frame via [`OriginalGuard`];
+//! * `original` is called exactly once per frame via [`corelib::OriginalGuard`];
 //! * the frame's Drop is allocation-free and panic-free: an uncommitted
 //!   frame closes the gate and leaks the App into a retention root so a
 //!   still-reachable callback can only passthrough.
@@ -140,7 +140,7 @@ impl SchedulerContext {
     /// The replacement body: one full frame of the fixed callback order.
     ///
     /// `this`/`method` are the arguments the game passed to the replacement;
-    /// they are forwarded verbatim to the original (docs/runtime-crate.md:
+    /// they are forwarded verbatim to the original (runtime crate Rustdoc:
     /// replacement 把 this、method 原样传给 original).
     pub fn run_frame(&self, this: *mut Il2CppObjectOpaque, method: *const MethodInfoOpaque) {
         // Scoped dispatch for this execution root (plugin systems inside use
@@ -213,7 +213,7 @@ impl SchedulerContext {
     }
 }
 
-/// TLS five states (docs/runtime-crate.md 主线程 TLS).
+/// TLS five states (runtime crate Rustdoc 主线程 TLS).
 enum AppSlot {
     AwaitingHandoff,
     Running(Box<App>),
@@ -308,7 +308,7 @@ impl SchedulerFrame<'_> {
         //    short &mut borrow is taken): any unwind in a driver stage
         //    leaves it in `self.app`, so the frame's Drop retains (leaks)
         //    it instead of dropping plugin state mid-unwind
-        //    (docs/runtime-crate.md 兜底 Drop：宁可失去回收，也不得在
+        //    (runtime crate Rustdoc 兜底 Drop：宁可失去回收，也不得在
         //    unwind 中意外 drop App).
         let token: MainThreadToken = unsafe {
             // SAFETY: reviewed scheduler boundary — the identity predicate
@@ -322,7 +322,7 @@ impl SchedulerFrame<'_> {
                 // First Startup driver completed and the App is still
                 // runnable: the runtime opens the RuntimeGate LAST.
                 // Individual plugin retirements are owner-local failures
-                // (runtime-crate.md: 单个插件的 Startup/Update 失败不是
+                // (runtime crate Rustdoc: 单个插件的 Startup/Update 失败不是
                 // scheduler failure) and do not block the gate or the
                 // remaining plugins; only a frame-level unwind above
                 // reaches the global-failure path.
@@ -388,7 +388,7 @@ impl SchedulerFrame<'_> {
         );
         // SAFETY: the original is the typed pointer captured from the slot
         // at bind time; the replacement passes `this`/`method` through
-        // verbatim (docs/runtime-crate.md 目标专用 ABI).
+        // verbatim (runtime crate Rustdoc 目标专用 ABI).
         unsafe {
             (self.context.hook.original)(self.this, self.method);
         }

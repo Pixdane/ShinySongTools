@@ -1,6 +1,6 @@
-# 运行时架构总览
+# Runtime crate
 
-状态：v2 设计（2026-08-29 修订）。本版依据 [架构审查与类型驱动重设计提案](2026-08-29-architecture-review-and-proposal.md) 的审查结论与用户决策修订。产品定位：**个人使用的插件平台**——v1 交付正确的插件系统、一个 FPS 解锁测试插件、配置文件与面向插件开发的 Debug socket（含运行时自省 topic）；翻译、贴图等功能插件按同一 API 后续逐个立项。
+状态：v2 设计（2026-08-29 修订）。本版依据本文后附的“架构审查与类型驱动重设计记录”及用户决策修订。产品定位：**个人使用的插件平台**——v1 交付正确的插件系统、一个 FPS 解锁测试插件、配置文件与面向插件开发的 Debug socket（含运行时自省 topic）；翻译、贴图等功能插件按同一 API 后续逐个立项。
 
 本文是进程内架构的索引，只定义 crate 依赖方向、文档职责和跨层不变量。各系统详细设计以对应分册为准；**跨层不变量以本档为唯一权威清单**，分册只引用、不重复定义。
 
@@ -20,14 +20,12 @@
 
 ## 文档与 crate
 
-| 文档 | 概念 crate | 权威范围 |
+| Rustdoc | crate | 权威范围 |
 |---|---|---|
-| [Core crate 设计](core-crate.md) | `core` | 平台基础 API、MainThreadToken、gate、MethodPointer 封装、IL2CPP backend、callback-safe 原语、CompactEvent |
-| [Plugin API 设计](plugin-api.md) | `core::plugin_api` | 插件作者可见的 Plugin、AppCtx、phase system、route、hook typestate、错误类型 |
-| [Runtime：App 与 driver](plugin-system.md) | `runtime` | App、PluginManager、owner scope、固定 driver、惰性初始化、局部回滚 |
-| [Runtime：bootstrap 与 scheduler](runtime-crate.md) | `runtime` | `scsp_start`、bootstrap worker、readiness 阶梯、Handoff、TLS、global failure |
-| [FPS 插件](plugin-api.md#功能模式示例fps-解锁（unlock_fps-crate）) | `unlock_fps` | Unity 两个静态 setter hook、main→callback latest route、`unlock_fps.get`/`unlock_fps.set` |
-| [Debug、Diagnostics 与 Logging](debug-diagnostics-logging.md) | `debug` + `runtime` | Observability 与 DebugPlugin（JSON-RPC over UDS、自省 topic） |
+| Core crate + Plugin API | `corelib` | 平台基础 API、MainThreadToken、gate、MethodPointer 封装、plugin facade、callback-safe 原语、CompactEvent |
+| App 与 driver + Bootstrap 与 scheduler + Swift FFI | `shiny_song_tools` | App、PluginManager、owner scope、`scsp_start`、readiness、Handoff、TLS、global failure |
+| Unlock FPS plugin | `unlock_fps` | Unity 两个静态 setter hook、main→callback latest route、`unlock_fps.get`/`unlock_fps.set` |
+| Debug control plane 与 Observability | `debug` | JSON-RPC over UDS、dispatch、pending/correlation、自省 topic；runtime 负责 observability root |
 
 生产 crate 目前为四个：`core`、`debug`、`unlock_fps`、`runtime`（另有 `crates/testing/fake-unity-framework` 作为无游戏 cdylib fixture，不属于生产依赖图）。原 plugin-system 职责并入 `runtime`；plugin API facade 位于 `core::plugin_api`，功能插件按职责独立成 crate。
 
@@ -98,8 +96,8 @@ PlayTools AKPlugin
 
 ## 非目标
 
-- Bundle 构建、签名、安装和恢复事务，见 [Bundle 编译流程](bundle-build.md)。
-- Swift `AKPlugin` 的入口行为，见 [Swift 入口行为](swift-entry.md)。
+- Bundle 构建、签名、安装和恢复事务属于仓库根 `docs/bundle-build.md`，不属于 Rust API。
+- Swift `AKPlugin` 的入口行为见本 crate Rustdoc 的“Swift FFI 入口”。
 - Frida attach、load-time interpose 或其它备选注入路线。
 - 某个游戏版本的 SHA、地址或实验批次流水。
 - 翻译、贴图、身体参数、Live MV 等具体功能插件（v1 只有 FPS 解锁测试插件；翻译后续立项并复用 SCSPTranslationData 社区格式）。
