@@ -117,7 +117,17 @@ pub fn main(init: std.process.Init) !void {
             die("cannot remove the old bundle copy: {t}", .{err});
     }
 
-    std.debug.print("bundle-publish: {s} + {s}\n", .{ final_bundle, final_manifest });
+    try printStdout(io, gpa, "bundle-publish: {s} + {s}\n", .{ final_bundle, final_manifest });
+}
+
+fn printStdout(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const message = try std.fmt.allocPrint(allocator, fmt, args);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
 
 /// Delete a stale transaction path if it exists; ignore absence.

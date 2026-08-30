@@ -69,3 +69,9 @@
             if let firstWindow = NSApplication.shared.windows.first,
                event.window != firstWindow {
 <<< END
+
+<<< BEFORE
+            let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton, .fullScreenButton]
+<<< AFTER
+            let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+<<< END

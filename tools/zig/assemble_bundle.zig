@@ -66,7 +66,17 @@ pub fn main(init: std.process.Init) !void {
     setExecutableBit(io, exe_out) catch |err|
         die("cannot mark executable: {t}", .{err});
 
-    std.debug.print("assemble-bundle: {s}\n", .{dir_path});
+    try printStdout(io, gpa, "assemble-bundle: {s}\n", .{dir_path});
+}
+
+fn printStdout(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const message = try std.fmt.allocPrint(allocator, fmt, args);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
 
 fn setExecutableBit(io: std.Io, path: []const u8) !void {

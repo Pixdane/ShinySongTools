@@ -166,7 +166,17 @@ pub fn main(init: std.process.Init) !void {
 
     cwd.writeFile(io, .{ .sub_path = out_path, .data = json.items }) catch |err|
         die("cannot write manifest: {t}", .{err});
-    std.debug.print("bundle-manifest: {s} ({d} entries)\n", .{ out_path, entries.items.len });
+    try printStdout(io, gpa, "bundle-manifest: {s} ({d} entries)\n", .{ out_path, entries.items.len });
+}
+
+fn printStdout(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const message = try std.fmt.allocPrint(allocator, fmt, args);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
 
 fn walk(

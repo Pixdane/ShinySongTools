@@ -92,6 +92,8 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
         "-p",
         "runtime",
     });
+    cargo_run.setEnvironmentVariable("MACOSX_DEPLOYMENT_TARGET", "12.0");
+    cargo_run.setEnvironmentVariable("RUSTFLAGS", "-C link-arg=-mmacosx-version-min=12.0");
     if (options.cargo_features.len != 0) {
         cargo_run.addArgs(&.{ "--features", options.cargo_features });
     }
@@ -150,7 +152,11 @@ fn addBundlePipeline(b: *std.Build, tools: BundleTools, options: BundleOptions) 
     const commit_run = b.addSystemCommand(&.{ "git", "-C", "third_party/PlayTools", "rev-parse", "HEAD" });
     const commit_file = commit_run.captureStdOut(.{ .trim_whitespace = .all });
     const rustc_version = captureVersion(b, &.{ "rustc", "--version" });
-    const swiftc_version_run = b.addSystemCommand(&.{ "/usr/bin/xcrun", "swiftc", "--version" });
+    const swiftc_version_run = b.addSystemCommand(&.{
+        "/bin/sh",
+        "-c",
+        "exec /usr/bin/xcrun swiftc --version 2>/dev/null",
+    });
     withoutNixAppleSdkEnv(swiftc_version_run);
     const swiftc_version = swiftc_version_run.captureStdOut(.{ .trim_whitespace = .all });
     const zig_version = captureVersion(b, &.{ "zig", "version" });

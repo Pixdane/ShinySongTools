@@ -77,10 +77,22 @@ pub fn main(init: std.process.Init) !void {
         .sub_path = out_path,
         .data = text,
     }) catch |err| die("cannot write {s}: {t}", .{ out_path, err });
-    std.debug.print(
+    try printStdout(
+        io,
+        gpa,
         "patch-apply: applied {d} block(s): {s} -> {s}\n",
         .{ blocks.len, in_path, out_path },
     );
+}
+
+fn printStdout(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const message = try std.fmt.allocPrint(allocator, fmt, args);
+    try std.Io.File.stdout().writeStreamingAll(io, message);
 }
 
 fn parseBlocks(gpa: std.mem.Allocator, patch_text: []const u8) ![]Block {
