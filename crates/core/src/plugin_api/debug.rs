@@ -147,7 +147,7 @@ impl DebugTopicChannel {
         }
         self.inbox
             .lock()
-            .expect("inbox lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push_back(DebugQueuedRequest {
                 id,
                 payload,
@@ -285,7 +285,11 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>>
     fn run(&mut self, world: &mut World, main: &crate::MainThreadToken) -> SystemResult {
         // Fast path: nothing queued.
         let requests: Vec<DebugQueuedRequest> = {
-            let mut inbox = self.channel.inbox.lock().expect("inbox lock");
+            let mut inbox = self
+                .channel
+                .inbox
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             inbox.drain(..).collect()
         };
         if requests.is_empty() {
@@ -349,7 +353,11 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>>
                 Ok(result) => result,
                 Err(_) => {
                     {
-                        let mut inbox = self.channel.inbox.lock().expect("inbox lock");
+                        let mut inbox = self
+                            .channel
+                            .inbox
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         // Push back in reverse so FIFO order is preserved.
                         for leftover in iter.by_ref().rev() {
                             inbox.push_front(leftover);
@@ -358,7 +366,7 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>>
                     self.channel
                         .outbox
                         .lock()
-                        .expect("outbox lock")
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .push(DebugResponse {
                             id: queued.id,
                             generation: queued.generation,
@@ -378,7 +386,7 @@ impl<T: MainDebugTopic, Marker, H: MainDebugHandler<T, Marker>>
             self.channel
                 .outbox
                 .lock()
-                .expect("outbox lock")
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(DebugResponse {
                     id: queued.id,
                     generation: queued.generation,
@@ -517,7 +525,11 @@ impl<T: CallbackDebugTopic> crate::plugin_api::host::UpdateSystemRunner for Call
         // 1. Deliver one queued request when the slot is free (no overwrite
         //    of an unconsumed request — docs: 新 request 不覆盖旧 request).
         if !self.request_slot.is_set() {
-            let mut inbox = self.channel.inbox.lock().expect("inbox lock");
+            let mut inbox = self
+                .channel
+                .inbox
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(queued) = inbox.front() {
                 match queued.payload.clone().downcast::<T::Request>() {
                     Ok(typed) => {
@@ -528,7 +540,11 @@ impl<T: CallbackDebugTopic> crate::plugin_api::host::UpdateSystemRunner for Call
                     }
                     Err(_) => {
                         let queued = inbox.pop_front().expect("front checked above");
-                        let mut outbox = self.channel.outbox.lock().expect("outbox lock");
+                        let mut outbox = self
+                            .channel
+                            .outbox
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         outbox.push(DebugResponse {
                             id: queued.id,
                             generation: queued.generation,
@@ -571,7 +587,11 @@ impl<T: CallbackDebugTopic> crate::plugin_api::host::UpdateSystemRunner for Call
                     message,
                 }),
             };
-            let mut outbox = self.channel.outbox.lock().expect("outbox lock");
+            let mut outbox = self
+                .channel
+                .outbox
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             outbox.push(DebugResponse {
                 id,
                 generation,

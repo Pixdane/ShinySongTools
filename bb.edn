@@ -89,4 +89,52 @@ socket 默认从 local.edn 的游戏 .app 推导，或用 --socket 显式指定�
        (println "method 例: runtime.plugins / runtime.gates / runtime.info / fps.set")
        (System/exit 1))
      (let [response (dc/call socket method params)]
-       (println (json/generate-string response {:pretty true}))))}}}
+       (println (json/generate-string response {:pretty true}))))}
+
+  translation
+  {:doc "翻译样板。用法: bb translation generate|check|apply|selftest"
+   :requires ([translation-templates :as tt])
+   :task
+   (let [[command & args] *command-line-args*]
+     (case command
+       "generate"
+       (let [[dump out-dir] args
+             result (tt/generate! (or dump tt/default-dump)
+                                  (or out-dir tt/default-output-dir))]
+         (println "Translation templates generated")
+         (doseq [[label key] [["Catalog" :catalog]
+                              ["Bindings" :bindings]
+                              ["Slots" :slots]
+                              ["Text units" :units]
+                              ["Entity units" :entities]
+                              ["Templates" :templates]
+                              ["Pending" :pending]
+                              ["Source digest" :source-digest]]]
+           (println (clojure.core/format "%-14s %s" label (get result key)))))
+
+       "check"
+       (let [[dump out-dir] args
+             result (tt/check! (or dump tt/default-dump)
+                               (or out-dir tt/default-output-dir))]
+         (println "Translation templates valid")
+         (doseq [[label key] [["Slots" :slots]
+                              ["Units" :units]
+                              ["Translated" :translated]
+                              ["Pending" :pending]]]
+           (println (clojure.core/format "%-12s %s" label (get result key)))))
+
+       "apply"
+       (let [[dump out-dir output] args
+             result (tt/apply! (or dump tt/default-dump)
+                               (or out-dir tt/default-output-dir)
+                               (or output tt/default-applied))]
+         (println "Translation dictionary materialized")
+         (println (clojure.core/format "%-12s %s" "Output" (:output result)))
+         (println (clojure.core/format "%-12s %s" "Slots" (:slots result))))
+
+       "selftest"
+       (do (tt/selftest!) (println "Translation template selftest OK"))
+
+       (throw
+        (ex-info "用法: bb translation generate|check|apply|selftest"
+                 {:args *command-line-args*}))))}}}

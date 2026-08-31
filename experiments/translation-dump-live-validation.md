@@ -30,6 +30,24 @@ Newtonsoft SerializeObject 被 iOS 裁剪,序列化走手动字典遍历。
 
 ## 证据
 
+### 尝试 7(2026-08-31,歌词捕获突破 + transport 加固)
+
+- **debug transport 加固**:连接层 catch_unwind + 全部锁 poison-tolerant。
+  验证:必崩查询(TMP/LiveMV 类)后连接存活、后续查询恢复(handler 层 panic
+  对这类查询仍在,返回 plugin_unavailable)。
+- **status 暴露 lyrics/bytes 计数器**——这直接定位了歌词问题:之前不是 hook 没装,
+  而是没有观测手段。
+- **歌词捕获突破**:MV 播放期间 `TMP_Text.set_text` hook 触发 33,003 次、
+  全部 kept;`lyrics_dump.json` 696 条唯一文本,其中明确含《Spread the Wings》
+  歌词行(`誰も見たことない翼`、`これはもう最初の奇跡`等)。
+  **结论:iOS 歌词走 TMP 显示路径,听歌即采集,逐行原文 = lyrics_dump.json 的 key**。
+  与上游 80 行不匹配仅因歌曲不同(交叉匹配 1/80,采集管线本身验证通过)。
+- 前几个会话歌词为 0 的真因:TMP 基类 set_text hook 虽安装但 iOS 不调用基类
+  (虚分派到派生类)——本轮 TMP 计数暴涨说明触发的是**基类方法本体**;
+  更可能本会话歌词行确实流经基类 setter(计数 33k),前次未捕获是游戏未到
+  MV 场景。待多首歌交叉确认采集稳定性。
+- 收尾:restore 至 baseline(clean)。
+
 ### 尝试 6(2026-08-30,歌词捕获attempt + TMP 兜底)
 
 - 新增 `TMP_Text.set_text` 兜底 hook(所有 TMP 显示文本必经)。

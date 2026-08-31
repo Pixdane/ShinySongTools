@@ -81,7 +81,10 @@ impl DebugTransport {
     }
 
     fn push_response(&self, body: serde_json::Value, generation: u64) {
-        let mut outbox = self.outbox.lock().expect("outbox lock");
+        let mut outbox = self
+            .outbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if outbox.len() >= MAX_OUTBOX_RESPONSES {
             // The client stopped reading; drop the newest answer instead of
             // growing without bound. The affected request hangs on the
@@ -132,8 +135,17 @@ fn io_worker(listener: UnixListener, transport: Arc<DebugTransport>) {
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {
+                // A panic escaping the connection loop (a panic in a response
+                // serializer, a poisoned lock unwrap, etc.) must not kill the
+                // worker thread: contain it and keep serving.
+                let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_connection(&stream, &listener, &transport)
+                }));
+                if served.is_err() {
+                    tracing::warn!(target: "debug", "debug connection handler panicked; connection reset");
+                }
                 // Peer hangup or IO error: close and take the next one.
-                let _ = handle_connection(&stream, &listener, &transport);
+                drop(stream);
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 // Nothing waiting; keep the loop cheap.
@@ -161,14 +173,14 @@ fn handle_connection(
     transport
         .outbox
         .lock()
-        .expect("outbox lock")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .retain(|response| response.generation == generation);
     // Fresh connection scope: id uniqueness applies per connection; a
     // still-pending request of a previous connection does not block reuse.
     transport
         .active_ids
         .lock()
-        .expect("active ids lock")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
     let mut length_buffer = [0u8; 4];
     let mut length_read = 0usize;
@@ -184,7 +196,10 @@ fn handle_connection(
         // Responses first (bounded drain); answers of dead connections are
         // dropped instead of being mixed into this session.
         let responses: Vec<WireResponse> = {
-            let mut outbox = transport.outbox.lock().expect("outbox lock");
+            let mut outbox = transport
+                .outbox
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             outbox.drain(..).collect()
         };
         for response in responses {
@@ -362,7 +377,10 @@ impl DebugTransport {
         // Same-connection active ids must be unique (docs: 重复回
         // invalid_request，response 写回后 id 可复用).
         if let Some(key) = trackable_id(&id) {
-            let mut active = self.active_ids.lock().expect("active ids lock");
+            let mut active = self
+                .active_ids
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if active.contains(&key) {
                 drop(active);
                 self.respond_error(id, -32600, None, "duplicate active id", generation);
@@ -372,7 +390,13 @@ impl DebugTransport {
         }
         // Bounded inbox: a client flooding frames faster than the main
         // thread dispatches gets `queue_full` instead of unbounded growth.
-        if self.inbox.lock().expect("inbox lock").len() >= MAX_INBOX_REQUESTS {
+        if self
+            .inbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+            >= MAX_INBOX_REQUESTS
+        {
             self.respond_error(
                 id,
                 -32000,
@@ -382,12 +406,15 @@ impl DebugTransport {
             );
             return;
         }
-        self.inbox.lock().expect("inbox lock").push(WireRequest {
-            id,
-            method,
-            params,
-            generation,
-        });
+        self.inbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(WireRequest {
+                id,
+                method,
+                params,
+                generation,
+            });
     }
 }
 
@@ -437,7 +464,11 @@ impl DebugDispatchSystem {
     fn run(&mut self) {
         let current = self.transport.current_generation();
         let requests: Vec<WireRequest> = {
-            let mut inbox = self.transport.inbox.lock().expect("inbox lock");
+            let mut inbox = self
+                .transport
+                .inbox
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             // Requests of replaced connections are dropped here: they were
             // never enqueued into topics, so no pending accounting is owed.
             inbox
@@ -521,7 +552,11 @@ impl DebugDispatchSystem {
         // dropped here: their session is gone.
         for topic in topic_views {
             let responses: Vec<DebugResponse> = {
-                let mut outbox = topic.channel.outbox.lock().expect("outbox lock");
+                let mut outbox = topic
+                    .channel
+                    .outbox
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 outbox.drain(..).collect()
             };
             for response in responses {
