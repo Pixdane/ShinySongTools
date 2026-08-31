@@ -55,6 +55,19 @@
 - 字体图集(假名/汉字码表 UTF-16 段)是大假阳性源;已用"歌词行形态"
   过滤(短 + 假名/汉字混用)排除。
 
+### 歌曲覆盖(2026-08-31)
+
+- 歌单:`mlMusic_Name`(实机 dic)共 **176 首**(id → 曲名)。
+- 歌词 bundle 118 个中 **89 首歌已唯一对应到 bundle**:
+  - 曲名匹配(词边界 / Unity `u32 长度前缀 + UTF-8` 结构锚定 / UTF-16LE 变体);
+  - **资产名内嵌乐曲 id**(`ef_Lv_057_FlowerBush`、`013_HideAt` 这类三位零
+    填充 id,取出现次数 ≥2 的最大计数者)——比曲名匹配覆盖更广且无假阳性。
+- 剩余 29 个歌词 bundle 无法唯一归属(27 个资产名无 id、24 个多 id 并列)。
+- 覆盖清单生成:`bb experiments/resources-route/song_coverage.bb`
+  (输出 `build/experiments/resources-route/song_coverage.tsv`,游戏衍生
+  数据不入库)。缺失歌曲集中在アニメ ver. / xRライブ ver. 变体(与基础版
+  共用 bundle)及未下载曲目。
+
 ### 后续方向
 
 - 对 118 个命中 bundle 做完整对象级解析(blocksinfo 之后还有 node 表,
@@ -69,6 +82,8 @@ cd experiments/resources-route
 cargo build --release
 ../../build/target/release/resources-route <D目录或单个bundle> [文本过滤]
 # STATS=1 输出解析/解压统计;无参数打印 usage
+# TITLES=<songs.tsv> 曲名/乐曲id 匹配;DUMPSTRINGS=1 倾倒单文件字符串;
+# LZ4PROBE=<file> 解一个 LZ4 frame 文件
 ```
 
 单文件模式可带子串过滤(在解压数据中搜索并打印上下文);全量模式输出

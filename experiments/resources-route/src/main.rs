@@ -313,12 +313,165 @@ fn looks_like_glyph_table(s: &str) -> bool {
     inc * 10 >= kana.len() * 8
 }
 
+/// 归一化 NBSP(C2 A0)与全角空格(E3 80 80)为 ASCII 空格,便于曲名匹配。
+fn normalize_spaces(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0usize;
+    while i < data.len() {
+        if data[i] == 0xC2 && i + 1 < data.len() && data[i + 1] == 0xA0 {
+            out.push(b' ');
+            i += 2;
+        } else if data[i] == 0xE3
+            && i + 2 < data.len()
+            && data[i + 1] == 0x80
+            && data[i + 2] == 0x80
+        {
+            out.push(b' ');
+            i += 3;
+        } else {
+            out.push(data[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 在解压数据里匹配曲名。两种策略取并:
+/// 1. 结构锚定:Unity 序列化字符串是 `u32 LE 长度 + UTF-8`,搜
+///    `len_prefix + title` 模式(零假阳性);
+/// 2. 词边界:归一化空格后,命中前后不得是字母/假名/汉字
+///    (否则 "Reflection" 会匹配进 "ReflectionProbe"、"青空" 会匹配进歌词行)。
+fn match_titles(data: &[u8], titles: &[(String, String)]) -> Vec<(String, String)> {
+    let norm = normalize_spaces(data);
+    let norm_text = String::from_utf8_lossy(&norm);
+    let wordy = |c: char| c.is_alphanumeric() || is_kana(c) || is_cjk(c);
+    titles
+        .iter()
+        .filter(|(_, t)| {
+            if t.is_empty() {
+                return false;
+            }
+            let mut variants = vec![t.clone()];
+            for sp in ['\u{a0}', '\u{3000}'] {
+                if t.contains(sp) {
+                    variants.push(t.replace(sp, " "));
+                }
+            }
+            for v in &variants {
+                let vb = v.as_bytes();
+                let mut pat = Vec::with_capacity(4 + vb.len());
+                pat.extend_from_slice(&(vb.len() as u32).to_le_bytes());
+                pat.extend_from_slice(vb);
+                if data.windows(pat.len()).any(|w| w == pat) {
+                    return true;
+                }
+            }
+            // UTF-16LE 变体:u16 单元级词边界(前后单元不得是文字)。
+            let u16_wordy = |u: u16| {
+                (0x3041..=0x30FF).contains(&u)
+                    || (0x4E00..=0x9FFF).contains(&u)
+                    || (0x30..=0x39).contains(&u)
+                    || (0x41..=0x5A).contains(&u)
+                    || (0x61..=0x7A).contains(&u)
+            };
+            for v in &variants {
+                let units: Vec<u8> = v.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+                let mut from = 0usize;
+                while let Some(rel) = data[from..].windows(units.len()).position(|w| w == units) {
+                    let s = from + rel;
+                    let before_ok =
+                        s < 2 || !u16_wordy(u16::from_le_bytes([data[s - 2], data[s - 1]]));
+                    let end = s + units.len();
+                    let after_ok = end + 2 > data.len()
+                        || !u16_wordy(u16::from_le_bytes([data[end], data[end + 1]]));
+                    if before_ok && after_ok {
+                        return true;
+                    }
+                    from = s + 2;
+                    if from + units.len() > data.len() {
+                        break;
+                    }
+                }
+            }
+            let mut from = 0usize;
+            'outer: for v in &variants {
+                while let Some(rel) = norm_text[from..].find(v.as_str()) {
+                    let s = from + rel;
+                    let before_ok = norm_text[..s]
+                        .chars()
+                        .next_back()
+                        .map_or(true, |c| !wordy(c));
+                    let after_ok = norm_text[s + v.len()..]
+                        .chars()
+                        .next()
+                        .map_or(true, |c| !wordy(c));
+                    if before_ok && after_ok {
+                        return true;
+                    }
+                    from = s + v.len();
+                    if from >= norm_text.len() {
+                        break 'outer;
+                    }
+                }
+            }
+            false
+        })
+        .cloned()
+        .collect()
+}
+
+/// 从 ASCII 串里提取资产名内嵌的三位零填充乐曲 id(`Lv_057_` / `013_HideAt`),
+/// 返回 (id, 出现次数),按 id 升序。1..=176 之外的数字 token 忽略。
+fn extract_music_ids(data: &[u8]) -> Vec<(u32, usize)> {
+    let mut counts = std::collections::HashMap::<u32, usize>::new();
+    let mut i = 0usize;
+    while i < data.len() {
+        if (0x20..0x7F).contains(&data[i]) {
+            let mut j = i;
+            while j < data.len() && (0x20..0x7F).contains(&data[j]) {
+                j += 1;
+            }
+            let run = &data[i..j];
+            let mut k = 0usize;
+            while k < run.len() {
+                if run[k].is_ascii_alphanumeric() {
+                    let s = k;
+                    while k < run.len() && run[k].is_ascii_alphanumeric() {
+                        k += 1;
+                    }
+                    let tok = &run[s..k];
+                    if tok.len() == 3 && tok.iter().all(u8::is_ascii_digit) {
+                        let v: u32 = std::str::from_utf8(tok).unwrap().parse().unwrap();
+                        if (1..=176).contains(&v) {
+                            *counts.entry(v).or_insert(0) += 1;
+                        }
+                    }
+                } else {
+                    k += 1;
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    let mut v: Vec<(u32, usize)> = counts.into_iter().collect();
+    v.sort_unstable();
+    v
+}
+
 struct ScanHit {
     via_lyric_name: bool,
+    matched: Vec<(String, String)>,
+    mids: Vec<(u32, usize)>,
     lines: Vec<String>,
 }
 
-fn scan_bundle(raw: Vec<u8>, text_filter: Option<&str>) -> Option<ScanHit> {
+fn scan_bundle(
+    raw: Vec<u8>,
+    text_filter: Option<&str>,
+    titles: &[(String, String)],
+) -> Option<ScanHit> {
     let bundle = parse_bundle(raw)?;
     let data = decompress_bundle(&bundle)?;
     if let Some(f) = text_filter {
@@ -327,6 +480,16 @@ fn scan_bundle(raw: Vec<u8>, text_filter: Option<&str>) -> Option<ScanHit> {
         }
     }
     let name_positions = find_lyric_positions(&data, 8);
+    let matched = if !titles.is_empty() && !name_positions.is_empty() {
+        match_titles(&data, titles)
+    } else {
+        Vec::new()
+    };
+    let mids = if name_positions.is_empty() {
+        Vec::new()
+    } else {
+        extract_music_ids(&data)
+    };
     let mut lines: Vec<String> = name_positions
         .iter()
         .flat_map(|p| extract_utf8_lines(&data, *p, 4).into_iter().take(2))
@@ -350,11 +513,13 @@ fn scan_bundle(raw: Vec<u8>, text_filter: Option<&str>) -> Option<ScanHit> {
         }
     }
     lines.truncate(8);
-    if lines.is_empty() {
+    if lines.is_empty() && matched.is_empty() {
         return None;
     }
     Some(ScanHit {
         via_lyric_name: !name_positions.is_empty(),
+        matched,
+        mids,
         lines,
     })
 }
@@ -406,6 +571,30 @@ fn inspect_single(path: &Path, needle: Option<&str>) {
         return;
     };
     println!("decompressed bytes: {}", data.len());
+    if std::env::var("DUMPSTRINGS").is_ok() {
+        // 调试:倾倒全部 UTF-8 日文行与 ASCII 串,找 bundle 内的曲名/对象名。
+        println!("--- utf8 jp lines ---");
+        for l in extract_utf8_lines(&data, data.len() / 2, 400) {
+            println!("   u8  {l}");
+        }
+        println!("--- ascii strings ---");
+        let mut i = 0usize;
+        while i < data.len() {
+            if (0x20..0x7F).contains(&data[i]) {
+                let mut j = i;
+                while j < data.len() && (0x20..0x7F).contains(&data[j]) {
+                    j += 1;
+                }
+                if j - i >= 6 {
+                    println!("   asc {}", String::from_utf8_lossy(&data[i..j]));
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        return;
+    }
     if let Some(needle) = needle {
         // 子串搜索:打印每次出现附近的 ASCII 字符串(调试用)。
         let mut start = 0usize;
@@ -452,6 +641,15 @@ fn inspect_single(path: &Path, needle: Option<&str>) {
 }
 
 fn main() {
+    if let Ok(p) = std::env::var("LZ4PROBE") {
+        let raw = std::fs::read(&p).expect("read");
+        let mut dec = lz4_flex::frame::FrameDecoder::new(&raw[..]);
+        let mut out = Vec::new();
+        dec.read_to_end(&mut out).expect("lz4 frame");
+        println!("decompressed {} bytes", out.len());
+        println!("{}", String::from_utf8_lossy(&out[..out.len().min(3000)]));
+        return;
+    }
     let args: Vec<String> = std::env::args().collect();
     let Some(target) = args.get(1).cloned() else {
         eprintln!("usage: resources-route <D目录或单个bundle文件> [文本过滤]");
@@ -488,20 +686,37 @@ fn main() {
         return;
     }
 
+    // TITLES=<tsv: id\ 曲名> 时,对 lyric 命中 bundle 做曲名匹配(bundle ↔ 歌)。
+    let titles: Vec<(String, String)> = std::env::var("TITLES")
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .map(|(id, t)| (id.to_string(), t.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let results: Vec<(PathBuf, ScanHit)> = files
         .par_iter()
         .filter_map(|p| {
             let raw = read_if_unityfs(p)?;
-            let hit = scan_bundle(raw, text_filter.as_deref())?;
+            let hit = scan_bundle(raw, text_filter.as_deref(), &titles)?;
             Some((p.clone(), hit))
         })
         .collect();
     let via_name = results.iter().filter(|(_, h)| h.via_lyric_name).count();
+    let matched_bundles = results
+        .iter()
+        .filter(|(_, h)| !h.matched.is_empty())
+        .count();
     println!(
-        "bundles with lyric features: {} (lyric-name: {}, utf16-kana-only: {})",
+        "bundles with lyric features: {} (lyric-name: {}, utf16-kana-only: {}, title-matched: {})",
         results.len(),
         via_name,
-        results.len() - via_name
+        results.len() - via_name,
+        matched_bundles
     );
     for (p, h) in &results {
         let tag = if h.via_lyric_name {
@@ -510,6 +725,14 @@ fn main() {
             "  [utf16-kana-only]"
         };
         println!("=== {}{tag}", p.display());
+        for (id, t) in &h.matched {
+            println!("   song {id}\t{t}");
+        }
+        for (id, n) in &h.mids {
+            if *n >= 2 {
+                println!("   mid {id} x{n}");
+            }
+        }
         for l in &h.lines {
             println!("   {}", l.replace('\n', " ⏎ "));
         }
