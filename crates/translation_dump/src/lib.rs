@@ -117,6 +117,9 @@ struct DumpDiagnostics {
     get_bytes_dumps: AtomicU64,
     lyrics_seen: AtomicU64,
     lyrics_kept: AtomicU64,
+    mv_lyrics_kept: AtomicU64,
+    timeline_lyrics_kept: AtomicU64,
+    tmp_texts_kept: AtomicU64,
     hook_hits: AtomicU64,
     get_text_hits: AtomicU64,
     enqueued: AtomicU64,
@@ -167,6 +170,8 @@ struct DumpState {
     lyrics_dirty: bool,
     /// Probe cursor into the sorted mlADVInfo_Title sid list.
     scenario_cursor: usize,
+    /// Probe cursor into the mlMusic_Name id list.
+    lyrics_cursor: usize,
 }
 
 impl DumpState {
@@ -186,6 +191,7 @@ impl DumpState {
             lyrics: BTreeMap::new(),
             lyrics_dirty: false,
             scenario_cursor: 0,
+            lyrics_cursor: 0,
         })
     }
 
@@ -760,6 +766,9 @@ impl Plugin for TranslationDumpPlugin {
         ctx.register_main_debug::<fn(ResMut<'static, DumpState>), ScenarioDump, _>(
             scenario_dump_handler,
         )?;
+        ctx.register_main_debug::<fn(ResMut<'static, DumpState>), LyricsDump, _>(
+            lyrics_dump_handler,
+        )?;
         tracing::info!(
             target: "translation_dump",
             path = %path_display,
@@ -788,7 +797,26 @@ fn dump_update(
         if state.lyrics.insert(text.clone(), String::new()).is_none() {
             state.lyrics_dirty = true;
         }
-        let _ = source;
+        match source {
+            SRC_MV_OVERLAY => {
+                state
+                    .diagnostics
+                    .mv_lyrics_kept
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SRC_TIMELINE => {
+                state
+                    .diagnostics
+                    .timeline_lyrics_kept
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                state
+                    .diagnostics
+                    .tmp_texts_kept
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
     state.flush_if_due()
 }
@@ -814,6 +842,9 @@ pub struct DumpStatusResponse {
     pub get_bytes_dumps: u64,
     pub lyrics_seen: u64,
     pub lyrics_kept: u64,
+    pub mv_lyrics_kept: u64,
+    pub timeline_lyrics_kept: u64,
+    pub tmp_texts_kept: u64,
     pub enqueued: u64,
     pub null_strings: u64,
     pub oversized: u64,
@@ -839,6 +870,9 @@ fn dump_status_handler(
         get_bytes_dumps: diagnostics.get_bytes_dumps.load(Ordering::Relaxed),
         lyrics_seen: diagnostics.lyrics_seen.load(Ordering::Relaxed),
         lyrics_kept: diagnostics.lyrics_kept.load(Ordering::Relaxed),
+        mv_lyrics_kept: diagnostics.mv_lyrics_kept.load(Ordering::Relaxed),
+        timeline_lyrics_kept: diagnostics.timeline_lyrics_kept.load(Ordering::Relaxed),
+        tmp_texts_kept: diagnostics.tmp_texts_kept.load(Ordering::Relaxed),
         enqueued: diagnostics.enqueued.load(Ordering::Relaxed),
         null_strings: diagnostics.null_strings.load(Ordering::Relaxed),
         oversized: diagnostics.oversized.load(Ordering::Relaxed),
@@ -1174,6 +1208,129 @@ fn scenario_dump_handler(
             sids_done,
             files_written,
             done: state.scenario_cursor >= sids.len(),
+        })
+    };
+    let mut inner = inner;
+    Ok(inner())
+}
+
+pub struct LyricsDump;
+impl MainDebugTopic for LyricsDump {
+    const NAME: &'static str = "translation_dump.lyricsdump";
+    type Request = LyricsDumpRequest;
+    type Response = Result<LyricsDumpResponse, String>;
+}
+
+#[derive(serde::Deserialize)]
+pub struct LyricsDumpRequest {
+    /// Candidate key patterns to probe per music id (tried in order).
+    /// Defaults to a built-in list of plausible layouts.
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// How many music ids to process this call (default 20; synchronous
+    /// on the main thread — batches stay small).
+    pub limit: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+pub struct LyricsDumpResponse {
+    pub total_music: usize,
+    pub cursor: usize,
+    pub files_written: usize,
+    pub patterns_used: Vec<String>,
+    pub done: bool,
+}
+
+/// Proactive lyrics bulk dump: iterate `mlMusic_Name` ids from the dic and
+/// probe `{pattern}` key candidates (replacing `{id}`) through the game's
+/// `DataFile` API. Pattern discovery: run once per id over all patterns;
+/// files that exist are written to `dumps/json/lyrics/`.
+fn lyrics_dump_handler(
+    _ctx: UpdateCtx<'_>,
+    request: LyricsDumpRequest,
+    mut state: ResMut<DumpState>,
+) -> Result<Result<LyricsDumpResponse, String>, DebugHandlerError> {
+    let inner = move || -> Result<LyricsDumpResponse, String> {
+        let default_patterns: Vec<String> = vec![
+            "{id}_lyrics".into(),
+            "lyrics/{id}".into(),
+            "music/{id}_lyrics".into(),
+            "music/{id}/lyrics".into(),
+            "musicscore/{id}".into(),
+            "musicscore/{id}_score".into(),
+            "lyric/{id}".into(),
+        ];
+        let patterns = if request.patterns.is_empty() {
+            default_patterns
+        } else {
+            request.patterns.clone()
+        };
+        let music_ids: Vec<String> = state
+            .entries
+            .get("mlMusic_Name")
+            .map(|bucket| bucket.keys().cloned().collect())
+            .unwrap_or_default();
+        let total_music = music_ids.len();
+        let limit = request.limit.unwrap_or(20);
+        let json_dir = state.path.parent().unwrap_or(Path::new(".")).join("json");
+        let _ = std::fs::create_dir_all(&json_dir);
+        let is_key_va =
+            il2cpp_recon::resolve_method_va("PRISM.Legacy.dll", "PRISM.DataFile", "IsKeyExist", 1)
+                .map_err(|error| error.to_string())?
+                .ok_or("DataFile.IsKeyExist(1) not found")?;
+        let get_bytes_va =
+            il2cpp_recon::resolve_method_va("PRISM.Legacy.dll", "PRISM.DataFile", "GetBytes", 1)
+                .map_err(|error| error.to_string())?
+                .ok_or("DataFile.GetBytes(1) not found")?;
+
+        let mut files_written = 0usize;
+        let mut processed = 0usize;
+        while state.lyrics_cursor < total_music && processed < limit {
+            let music_id = &music_ids[state.lyrics_cursor];
+            for pattern in &patterns {
+                let key = pattern.replace("{id}", music_id);
+                // SAFETY: main thread is attached; allocates a managed string.
+                let key_ptr = unsafe {
+                    il2cpp_recon::new_string_utf16(&key.encode_utf16().collect::<Vec<_>>())
+                };
+                if key_ptr == 0 {
+                    continue;
+                }
+                // SAFETY: compiled static entries of DataFile.IsKeyExist /
+                // GetBytes; trailing MethodInfo argument unused.
+                let exists = unsafe {
+                    let exists: unsafe extern "C" fn(*const c_void, *const c_void) -> bool =
+                        core::mem::transmute(is_key_va);
+                    exists(key_ptr as *const c_void, std::ptr::null())
+                };
+                if !exists {
+                    continue;
+                }
+                let sanitized: String = key
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let target = json_dir.join("lyrics").join(&sanitized);
+                if !target.exists() {
+                    dump_one_data_file(get_bytes_va as usize, &key, &target)?;
+                    files_written += 1;
+                }
+            }
+            state.lyrics_cursor += 1;
+            processed += 1;
+        }
+        Ok(LyricsDumpResponse {
+            total_music,
+            cursor: state.lyrics_cursor,
+            files_written,
+            patterns_used: patterns,
+            done: state.lyrics_cursor >= total_music,
         })
     };
     let mut inner = inner;

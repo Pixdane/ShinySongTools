@@ -30,6 +30,20 @@ Newtonsoft SerializeObject 被 iOS 裁剪,序列化走手动字典遍历。
 
 ## 证据
 
+### 尝试 8(2026-08-31,歌词主动抓取与源定位)
+
+- **lyricsdump topic**:按 mlMusic_Name 的 176 个 id × 17 种命名模式探测 DataFile
+  ——全部未命中。歌词数据不在 DataFile 层(与 DataFile 捕获、离线 grep D/ 存储、
+  resources-route LZ4 扫描三方互证);歌词文本在 MV timeline 资产内(UnityFS)。
+- **per-source 计数器上线**(mv_lyrics_kept / timeline_lyrics_kept / tmp_texts_kept),
+  播一首 MV 的分布:**timeline 主源(TimelineController.SetLyric,1.5 万+),
+  UpdateLyrics 有量(71),TMP 为背景 UI(几百)**。
+- 结论:之前"歌词零捕获"的观测盲区 = 无分源计数;SetLyric hook 实际一直在工作
+  (第一次 MV 崩溃也正是它触发的 null 文本极性 bug)。
+- 歌词采集策略定案:**听歌即采集**(lyrics_dump.json 以显示行文为 key 积累,
+  跨歌去重;全量 = 176 首全部播放一遍,无 DataFile 捷径);
+  若需免播放全量,做 timeline 资产解析(与 resources-route 的 UnityFS 扫描汇合)。
+
 ### 尝试 7(2026-08-31,歌词捕获突破 + transport 加固)
 
 - **debug transport 加固**:连接层 catch_unwind + 全部锁 poison-tolerant。
